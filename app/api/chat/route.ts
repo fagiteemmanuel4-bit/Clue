@@ -1,34 +1,28 @@
 import { NextResponse } from 'next/server'
+import { getProvider } from '@/lib/clue/providers'
+
+export const runtime = 'nodejs'
 
 export async function POST(request: Request) {
   try {
-    const { messages } = await request.json()
-    const apiKey = process.env.AI_API_KEY
-    const baseUrl = process.env.AI_BASE_URL || 'https://api.openai.com/v1'
-    const model = process.env.AI_MODEL || 'gpt-4o-mini'
+    const body = await request.json()
+    const messages = Array.isArray(body?.messages) ? body.messages : []
+    if (!messages.length) return NextResponse.json({ error: 'Messages are required.' }, { status: 400 })
 
-    if (!apiKey) {
-      return NextResponse.json({
-        message: 'Clue is ready, but its AI provider is not connected yet. Add AI_API_KEY and AI_MODEL in Vercel to enable live responses.'
-      }, { status: 200 })
-    }
+    const provider = getProvider(body?.model)
+    if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
 
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, temperature: 0.7, stream: false }),
+    const stream = await provider.stream(messages, request.signal)
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      },
     })
-
-    if (!response.ok) {
-      const detail = await response.text()
-      console.error('AI provider error:', response.status, detail)
-      return NextResponse.json({ message: 'Clue could not reach its AI provider. Please try again.' }, { status: 502 })
-    }
-
-    const data = await response.json()
-    return NextResponse.json({ message: data.choices?.[0]?.message?.content || 'I could not generate a response.' })
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') return new Response(null, { status: 499 })
     console.error('Chat route error:', error)
-    return NextResponse.json({ message: 'Something went wrong while processing that message.' }, { status: 500 })
+    return NextResponse.json({ error: 'Something went wrong while processing that message.' }, { status: 500 })
   }
 }
