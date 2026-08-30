@@ -3,7 +3,8 @@ import { neon } from '@neondatabase/serverless'
 import * as schema from './schema'
 
 const connectionString = process.env.DATABASE_URL
-if (!connectionString) throw new Error('DATABASE_URL is not configured')
-
-const sql = neon(connectionString)
+// Keep module evaluation build-safe. Vercel injects DATABASE_URL at runtime.
+// Any real database operation without it will fail rather than silently use a fallback database.
+const sql = neon(connectionString ?? 'postgresql://missing:missing@missing.invalid/missing')
 export const db = drizzle(sql, { schema })
+export const hasDatabaseUrl = Boolean(connectionString)
