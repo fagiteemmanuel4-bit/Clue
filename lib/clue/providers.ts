@@ -20,6 +20,7 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
         signal,
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
           Authorization: `Bearer ${apiKey}`,
           ...(baseUrl.includes('openrouter.ai')
             ? {
@@ -28,46 +29,77 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
               }
             : {}),
         },
-        body: JSON.stringify({ model, messages, temperature: 0.7, stream: true }),
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.7,
+          stream: true,
+        }),
       })
 
       if (!response.ok || !response.body) {
         const detail = await response.text().catch(() => '')
         console.error(`${label} provider error`, response.status, detail)
-        throw new Error(`${label} provider request failed`)
+        throw new Error(`${label} provider request failed (${response.status})`)
       }
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
+      let buffer = ''
+      let finished = false
 
       return new ReadableStream<Uint8Array>({
         async pull(controller) {
-          const { done, value } = await reader.read()
-          if (done) {
+          if (finished) {
             controller.close()
             return
           }
 
-          const text = decoder.decode(value, { stream: true })
-          for (const line of text.split(/\r?\n/)) {
-            if (!line.startsWith('data:')) continue
-            const payload = line.slice(5).trim()
-            if (!payload || payload === '[DONE]') continue
-
-            try {
-              const json = JSON.parse(payload)
-              const content = json.choices?.[0]?.delta?.content
-              if (typeof content === 'string' && content) controller.enqueue(encoder.encode(content))
-            } catch {
-              // Ignore malformed/partial SSE frames.
+          try {
+            const { done, value } = await reader.read()
+            if (done) {
+              if (buffer.trim()) processSseBuffer(buffer, controller)
+              finished = true
+              controller.close()
+              return
             }
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split(/\r?\n/)
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              processSseLine(line, controller)
+            }
+          } catch (error) {
+            finished = true
+            controller.error(error)
           }
         },
         cancel() {
+          finished = true
           reader.cancel().catch(() => undefined)
         },
       })
     },
+  }
+}
+
+function processSseBuffer(buffer: string, controller: ReadableStreamDefaultController<Uint8Array>) {
+  for (const line of buffer.split(/\r?\n/)) processSseLine(line, controller)
+}
+
+function processSseLine(line: string, controller: ReadableStreamDefaultController<Uint8Array>) {
+  if (!line.startsWith('data:')) return
+  const payload = line.slice(5).trim()
+  if (!payload || payload === '[DONE]') return
+
+  try {
+    const json = JSON.parse(payload)
+    const content = json.choices?.[0]?.delta?.content
+    if (typeof content === 'string' && content) controller.enqueue(encoder.encode(content))
+  } catch {
+    // Ignore malformed frames; the next complete SSE frame will continue the stream.
   }
 }
 
