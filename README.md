@@ -25,3 +25,5 @@ Set `DATABASE_URL` to the pooled Neon PostgreSQL connection string. Apply the ch
 ## Deployment
 
 The repository is connected to Vercel. Production deployments are created from `main`.
+
+<!-- Release trigger: production verification -->
