@@ -1,0 +1,39 @@
+'use client'
+
+import Link from 'next/link'
+import { ArrowLeft, ChevronRight } from 'lucide-react'
+import { useState } from 'react'
+
+const sections = [
+  ['Account','Profile, email, password and sessions'],
+  ['Appearance','Theme, density, type and motion'],
+  ['Chat','Response style, history and composer'],
+  ['Voice','Input, output and playback'],
+  ['Personalization','How Clue should work with you'],
+  ['Memory','Review and control what Clue remembers'],
+  ['AI Models','Default model and routing'],
+  ['Tools','Web, code and connected capabilities'],
+  ['Integrations','Connected services and permissions'],
+  ['Notifications','Tasks, security and product updates'],
+  ['Privacy','Data controls and Clue improvement'],
+  ['Security','Sessions and authentication'],
+  ['Accessibility','Motion, contrast, keyboard and type'],
+  ['Storage','Files, artifacts and usage'],
+  ['Subscription','Plan, limits and billing'],
+]
+
+export default function SettingsPage() {
+  const [theme,setTheme]=useState('System')
+  return <main className="settings-page">
+    <header className="settings-header"><Link href="/" className="back-link"><ArrowLeft/> <span>Clue</span></Link><h1>Settings</h1><div/></header>
+    <div className="settings-layout">
+      <aside className="settings-nav">{sections.map(([title,desc],i)=><button key={title} className={`settings-nav-item ${i===0?'active':''}`}><span><strong>{title}</strong><small>{desc}</small></span><ChevronRight/></button>)}</aside>
+      <section className="settings-content">
+        <div className="settings-intro"><p>Account</p><h2>Your Clue workspace.</h2><span>Keep your profile and preferences in sync across your conversations.</span></div>
+        <div className="settings-group"><label>Profile</label><div className="settings-row"><span><strong>Display name</strong><small>Shown in your Clue workspace.</small></span><button>Manage</button></div><div className="settings-row"><span><strong>Email</strong><small>Your account email.</small></span><button>Manage</button></div></div>
+        <div className="settings-group"><label>Appearance</label><div className="theme-options">{['Light','Dark','System'].map(x=><button className={theme===x?'chosen':''} onClick={()=>setTheme(x)} key={x}>{x}</button>)}</div></div>
+        <div className="settings-group"><label>Privacy</label><div className="settings-row"><span><strong>AI improvement</strong><small>Clue never uses your conversations for training without explicit consent.</small></span><button>Manage</button></div><div className="settings-row"><span><strong>Memory</strong><small>Review, edit or clear information Clue remembers.</small></span><Link href="/settings/memory">Open</Link></div></div>
+      </section>
+    </div>
+  </main>
+}
