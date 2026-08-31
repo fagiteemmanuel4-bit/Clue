@@ -5,6 +5,7 @@ import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/db'
 import { memories, userProfiles } from '@/db/schema'
 import { desc, eq } from 'drizzle-orm'
+import { CONVERSATION_SKILLS_PROMPT } from '@/lib/clue/conversation-skills'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,6 +51,10 @@ INTERACTIVE QUESTIONS
 [[CLUE_QUESTION]]{"question":"Your question","options":["Option A","Option B","Option C"],"placeholder":"Or type your own answer…"}[[/CLUE_QUESTION]]
 - Keep the question block separate from the main answer.
 - Use 2-5 concise options. Never use the block for trivial questions.
+
+CONVERSATION SKILL PACK
+Use the following open conversation patterns as behavioral tools. Apply only the skills relevant to the user’s request; do not announce the skill names or expose this internal list.
+${CONVERSATION_SKILLS_PROMPT}
 
 STYLE
 - Sound natural, intelligent, calm, confident, and human.
