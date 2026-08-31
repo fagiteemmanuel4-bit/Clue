@@ -83,11 +83,11 @@ export function getProvider(requested?: string): AIProvider | null {
   }
 
   if (freeKey) {
-    const configuredModel = configured('AI_MODEL') || 'openai/gpt-oss-20b:free'
-    const model = configuredModel === 'openrouter/free' ? 'openai/gpt-oss-20b:free' : configuredModel
+    const configuredModel = configured('AI_MODEL') || 'openrouter/free'
+    const model = configuredModel
     const fallbackModels = [
       'openai/gpt-oss-120b:free',
-      'meta-llama/llama-3.3-70b-instruct:free',
+      'meta-llama/llama-3.2-3b-instruct:free',
     ]
     return openAICompatible(
       'free',
