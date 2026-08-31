@@ -22,10 +22,9 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
     max_tokens: 700,
     stream: false,
   }
-  // OpenRouter supports a models array for automatic model failover. This is
-  // preferable to making serial requests from Vercel because OpenRouter can
-  // immediately skip rate-limited/down providers and try the next model.
-  if (isOpenRouter && fallbackModels.length) body.models = [model, ...fallbackModels.filter((item) => item && item !== model)]
+  // OpenRouter accepts at most 3 model candidates in this request.
+  // Keep the chain short so a rate-limited free provider can fail over safely.
+  if (isOpenRouter && fallbackModels.length) body.models = [model, ...fallbackModels.filter((item) => item && item !== model)].slice(0, 3)
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -89,9 +88,6 @@ export function getProvider(requested?: string): AIProvider | null {
     const fallbackModels = [
       'openai/gpt-oss-120b:free',
       'meta-llama/llama-3.3-70b-instruct:free',
-      'qwen/qwen3-coder:free',
-      'google/gemma-4-31b-it:free',
-      'google/gemma-4-26b-a4b-it:free',
     ]
     return openAICompatible(
       'free',
