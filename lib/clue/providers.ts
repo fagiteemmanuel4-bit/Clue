@@ -4,12 +4,13 @@ export type AIProvider = { id: string; label: string; stream: (messages: ChatMes
 const encoder = new TextEncoder()
 const configured = (...names: string[]) => { for (const name of names) { const value = process.env[name]?.trim(); if (value) return value } return '' }
 
-const FIRST_TOKEN_TIMEOUT = 8_000
-const REQUEST_TIMEOUT = 18_000
+const FIRST_TOKEN_TIMEOUT = 7_000
+const REQUEST_TIMEOUT = 9_000
+const NON_STREAM_TIMEOUT = 7_000
 
-function createAbort(signal?: AbortSignal) {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT)
-  return signal ? AbortSignal.any([signal, timeout]) : timeout
+function combinedSignal(signal: AbortSignal | undefined, controller: AbortController, timeoutMs: number) {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  return signal ? AbortSignal.any([signal, controller.signal, timeout]) : AbortSignal.any([controller.signal, timeout])
 }
 
 function readWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -21,7 +22,7 @@ function readWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function requestStream(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal) {
   const controller = new AbortController()
-  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  const combined = combinedSignal(signal, controller, REQUEST_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -48,12 +49,12 @@ async function requestStream(baseUrl: string, apiKey: string, model: string, mes
     const detail = await response.text().catch(() => '')
     throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`)
   }
-  return { response, reader: response.body.getReader(), controller }
+  return { reader: response.body.getReader(), controller }
 }
 
 async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal) {
   const controller = new AbortController()
-  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -66,7 +67,14 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
         'X-Title': 'Clue',
       } : {}),
     },
-    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 700, stream: false }),
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.4,
+      max_tokens: 700,
+      stream: false,
+      ...(isOpenRouter ? { provider: { sort: 'latency', allow_fallbacks: true } } : {}),
+    }),
   })
   if (!response.ok) throw new Error(`AI provider request failed (${response.status})`)
   const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
@@ -80,30 +88,31 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
     id,
     label,
     async stream(messages, signal) {
-      let firstReader: ReadableStreamDefaultReader<Uint8Array> | null = null
-      let firstController: AbortController | null = null
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+      let requestController: AbortController | null = null
       let firstValue: Uint8Array | null = null
 
       for (const candidate of [model, fallbackModel].filter(Boolean) as string[]) {
         try {
           const attempt = await requestStream(baseUrl, apiKey, candidate, messages, signal)
-          firstReader = attempt.reader
-          firstController = attempt.controller
+          requestController = attempt.controller
           const first = await readWithTimeout(attempt.reader.read(), FIRST_TOKEN_TIMEOUT)
           if (first.done) throw new Error('AI provider closed the stream before sending a response.')
+          reader = attempt.reader
           firstValue = first.value || new Uint8Array()
           console.info(`[Clue AI] stream started with ${candidate}`)
           break
         } catch (error) {
-          firstReader = null
-          firstController?.abort()
-          firstController = null
+          requestController?.abort()
+          requestController = null
+          reader = null
+          firstValue = null
           if (signal?.aborted) throw error
-          console.warn(`[Clue AI] ${candidate} did not start quickly; trying fallback.`)
+          console.warn(`[Clue AI] ${candidate} failed to start within ${FIRST_TOKEN_TIMEOUT}ms; trying fallback.`)
         }
       }
 
-      if (!firstReader || firstValue === null) {
+      if (!reader || firstValue === null) {
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
         const fallback = fallbackModel || model
         const content = await requestNonStreaming(baseUrl, apiKey, fallback, messages, signal)
@@ -112,29 +121,29 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
         })
       }
 
-      const reader = firstReader
+      const streamReader = reader
+      const controllerForRequest = requestController
       let buffer = ''
       let finished = false
+      const decoder = new TextDecoder()
       return new ReadableStream<Uint8Array>({
         start(controller) {
-          if (firstValue && firstValue.length) {
-            buffer += new TextDecoder().decode(firstValue, { stream: true })
-            const lines = buffer.split(/\r?\n/)
-            buffer = lines.pop() || ''
-            for (const line of lines) processSseLine(line, controller)
-          }
+          buffer += decoder.decode(firstValue!, { stream: true })
+          const lines = buffer.split(/\r?\n/)
+          buffer = lines.pop() || ''
+          for (const line of lines) processSseLine(line, controller)
         },
         async pull(controller) {
           if (finished) { controller.close(); return }
           try {
-            const { done, value } = await reader.read()
+            const { done, value } = await streamReader.read()
             if (done) {
               if (buffer.trim()) processSseBuffer(buffer, controller)
               finished = true
               controller.close()
               return
             }
-            buffer += new TextDecoder().decode(value, { stream: true })
+            buffer += decoder.decode(value, { stream: true })
             const lines = buffer.split(/\r?\n/)
             buffer = lines.pop() || ''
             for (const line of lines) processSseLine(line, controller)
@@ -143,7 +152,11 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
             controller.error(error)
           }
         },
-        cancel() { finished = true; firstController?.abort(); reader.cancel().catch(() => undefined) },
+        cancel() {
+          finished = true
+          controllerForRequest?.abort()
+          streamReader.cancel().catch(() => undefined)
+        },
       })
     },
   }
