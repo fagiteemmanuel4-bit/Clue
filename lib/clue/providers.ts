@@ -11,21 +11,10 @@ function combinedSignal(signal: AbortSignal | undefined, controller: AbortContro
   return signal ? AbortSignal.any([signal, controller.signal, timeout]) : AbortSignal.any([controller.signal, timeout])
 }
 
-async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, fallbackModels: string[] = []) {
+async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal) {
   const controller = new AbortController()
   const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    temperature: 0.4,
-    max_tokens: 700,
-    stream: false,
-  }
-  // OpenRouter accepts at most 3 model candidates in this request.
-  // Keep the chain short so a rate-limited free provider can fail over safely.
-  if (isOpenRouter && fallbackModels.length) body.models = [model, ...fallbackModels.filter((item) => item && item !== model)].slice(0, 3)
-
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     signal: combined,
@@ -37,7 +26,7 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
         'X-Title': 'Clue',
       } : {}),
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 700, stream: false }),
   })
 
   if (!response.ok) {
@@ -61,8 +50,19 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
     id,
     label,
     async stream(messages, signal) {
-      const content = await requestNonStreaming(baseUrl, apiKey, model, messages, signal, fallbackModels)
-      return textStream(content)
+      const candidates = [model, ...fallbackModels].filter((item, index, all) => item && all.indexOf(item) === index).slice(0, 3)
+      let lastError: unknown = null
+      for (const candidate of candidates) {
+        try {
+          const content = await requestNonStreaming(baseUrl, apiKey, candidate, messages, signal)
+          return textStream(content)
+        } catch (error) {
+          lastError = error
+          if (signal?.aborted) throw error
+          console.warn(`[Clue AI] ${candidate} failed; trying next model.`)
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error('AI provider did not respond.')
     },
   }
 }
@@ -83,7 +83,7 @@ export function getProvider(requested?: string): AIProvider | null {
   }
 
   if (freeKey) {
-    const configuredModel = configured('AI_MODEL') || 'openrouter/free'
+    const configuredModel = configured('AI_MODEL') || 'openai/gpt-oss-20b:free'
     const model = configuredModel === 'openrouter/free' ? 'openai/gpt-oss-20b:free' : configuredModel
     const fallbackModels = [
       'openai/gpt-oss-120b:free',
