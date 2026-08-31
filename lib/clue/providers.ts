@@ -4,9 +4,10 @@ export type AIProvider = { id: string; label: string; stream: (messages: ChatMes
 const encoder = new TextEncoder()
 const configured = (...names: string[]) => { for (const name of names) { const value = process.env[name]?.trim(); if (value) return value } return '' }
 
-const FIRST_TOKEN_TIMEOUT = 7_000
-const REQUEST_TIMEOUT = 9_000
-const NON_STREAM_TIMEOUT = 7_000
+const FIRST_TOKEN_TIMEOUT = 15_000
+const REQUEST_TIMEOUT = 20_000
+const STREAM_IDLE_TIMEOUT = 18_000
+const NON_STREAM_TIMEOUT = 15_000
 
 function combinedSignal(signal: AbortSignal | undefined, controller: AbortController, timeoutMs: number) {
   const timeout = AbortSignal.timeout(timeoutMs)
@@ -15,7 +16,7 @@ function combinedSignal(signal: AbortSignal | undefined, controller: AbortContro
 
 function readWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('AI provider did not start responding in time.')), ms)
+    const timer = setTimeout(() => reject(new Error('AI provider did not respond in time.')), ms)
     promise.then(value => { clearTimeout(timer); resolve(value) }, error => { clearTimeout(timer); reject(error) })
   })
 }
@@ -25,30 +26,11 @@ async function requestStream(baseUrl: string, apiKey: string, model: string, mes
   const combined = combinedSignal(signal, controller, REQUEST_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    signal: combined,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      Authorization: `Bearer ${apiKey}`,
-      ...(isOpenRouter ? {
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-rouge.vercel.app',
-        'X-Title': 'Clue',
-      } : {}),
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.4,
-      max_tokens: 700,
-      stream: true,
-      ...(isOpenRouter ? { provider: { sort: 'latency', allow_fallbacks: true } } : {}),
-    }),
+    method: 'POST', signal: combined,
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? { 'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-rouge.vercel.app', 'X-Title': 'Clue' } : {}) },
+    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 700, stream: true, ...(isOpenRouter ? { provider: { sort: 'latency', allow_fallbacks: true } } : {}) }),
   })
-  if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`)
-  }
+  if (!response.ok || !response.body) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`) }
   return { reader: response.body.getReader(), controller }
 }
 
@@ -57,26 +39,11 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
   const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    signal: combined,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      ...(isOpenRouter ? {
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-rouge.vercel.app',
-        'X-Title': 'Clue',
-      } : {}),
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.4,
-      max_tokens: 700,
-      stream: false,
-      ...(isOpenRouter ? { provider: { sort: 'latency', allow_fallbacks: true } } : {}),
-    }),
+    method: 'POST', signal: combined,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? { 'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-rouge.vercel.app', 'X-Title': 'Clue' } : {}) },
+    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 700, stream: false, ...(isOpenRouter ? { provider: { sort: 'latency', allow_fallbacks: true } } : {}) }),
   })
-  if (!response.ok) throw new Error(`AI provider request failed (${response.status})`)
+  if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`) }
   const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
   const content = json.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) throw new Error('AI provider returned an empty response.')
@@ -85,8 +52,7 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
 
 function openAICompatible(id: string, label: string, baseUrl: string, apiKey: string, model: string, fallbackModel?: string): AIProvider {
   return {
-    id,
-    label,
+    id, label,
     async stream(messages, signal) {
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
       let requestController: AbortController | null = null
@@ -103,12 +69,9 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
           console.info(`[Clue AI] stream started with ${candidate}`)
           break
         } catch (error) {
-          requestController?.abort()
-          requestController = null
-          reader = null
-          firstValue = null
+          requestController?.abort(); requestController = null; reader = null; firstValue = null
           if (signal?.aborted) throw error
-          console.warn(`[Clue AI] ${candidate} failed to start within ${FIRST_TOKEN_TIMEOUT}ms; trying fallback.`)
+          console.warn(`[Clue AI] ${candidate} failed to start; trying fallback.`)
         }
       }
 
@@ -116,9 +79,7 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
         const fallback = fallbackModel || model
         const content = await requestNonStreaming(baseUrl, apiKey, fallback, messages, signal)
-        return new ReadableStream<Uint8Array>({
-          start(controller) { controller.enqueue(encoder.encode(content)); controller.close() },
-        })
+        return new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode(content)); controller.close() } })
       }
 
       const streamReader = reader
@@ -129,52 +90,36 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
       return new ReadableStream<Uint8Array>({
         start(controller) {
           buffer += decoder.decode(firstValue!, { stream: true })
-          const lines = buffer.split(/\r?\n/)
-          buffer = lines.pop() || ''
+          const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''
           for (const line of lines) processSseLine(line, controller)
         },
         async pull(controller) {
           if (finished) { controller.close(); return }
           try {
-            const { done, value } = await streamReader.read()
+            const { done, value } = await readWithTimeout(streamReader.read(), STREAM_IDLE_TIMEOUT)
             if (done) {
               if (buffer.trim()) processSseBuffer(buffer, controller)
-              finished = true
-              controller.close()
-              return
+              finished = true; controller.close(); controllerForRequest?.abort(); return
             }
             buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split(/\r?\n/)
-            buffer = lines.pop() || ''
+            const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''
             for (const line of lines) processSseLine(line, controller)
           } catch (error) {
-            finished = true
-            controller.error(error)
+            finished = true; controllerForRequest?.abort(); controller.error(error)
           }
         },
-        cancel() {
-          finished = true
-          controllerForRequest?.abort()
-          streamReader.cancel().catch(() => undefined)
-        },
+        cancel() { finished = true; controllerForRequest?.abort(); streamReader.cancel().catch(() => undefined) },
       })
     },
   }
 }
 
-function processSseBuffer(buffer: string, controller: ReadableStreamDefaultController<Uint8Array>) {
-  for (const line of buffer.split(/\r?\n/)) processSseLine(line, controller)
-}
-
+function processSseBuffer(buffer: string, controller: ReadableStreamDefaultController<Uint8Array>) { for (const line of buffer.split(/\r?\n/)) processSseLine(line, controller) }
 function processSseLine(line: string, controller: ReadableStreamDefaultController<Uint8Array>) {
   if (!line.startsWith('data:')) return
   const payload = line.slice(5).trim()
   if (!payload || payload === '[DONE]') return
-  try {
-    const json = JSON.parse(payload)
-    const content = json.choices?.[0]?.delta?.content
-    if (typeof content === 'string' && content) controller.enqueue(encoder.encode(content))
-  } catch { /* Ignore incomplete/keep-alive SSE frames. */ }
+  try { const json = JSON.parse(payload); const content = json.choices?.[0]?.delta?.content; if (typeof content === 'string' && content) controller.enqueue(encoder.encode(content)) } catch { /* Ignore incomplete/keep-alive SSE frames. */ }
 }
 
 export function getProvider(requested?: string): AIProvider | null {

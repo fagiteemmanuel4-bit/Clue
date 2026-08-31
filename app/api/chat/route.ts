@@ -8,7 +8,7 @@ import { desc, eq } from 'drizzle-orm'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 30
+export const maxDuration = 60
 
 const messageSchema = z.object({ role: z.enum(['system', 'user', 'assistant']), content: z.string().min(1).max(100_000) })
 const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), userContext: z.record(z.string(), z.unknown()).optional() })
