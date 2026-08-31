@@ -1,4 +1,4 @@
-import { pgEnum, pgTable, text, timestamp, uuid, real, index } from 'drizzle-orm/pg-core'
+import { pgEnum, pgTable, text, timestamp, uuid, real, index, boolean, jsonb } from 'drizzle-orm/pg-core'
 
 export const messageRole = pgEnum('message_role', ['user', 'assistant'])
 export const contentType = pgEnum('content_type', ['text', 'voice'])
@@ -7,6 +7,13 @@ export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(), email: text('email').notNull().unique(), passwordHash: text('password_hash').notNull(), displayName: text('display_name'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), preferredAccent: text('preferred_accent').default('neutral').notNull(), themePreference: text('theme_preference').default('system').notNull(),
 })
+export const userProfiles = pgTable('user_profiles', {
+  id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name'), profession: text('profession'), uses: jsonb('uses').$type<string[]>().default([]).notNull(), communicationStyle: text('communication_style'), experienceLevel: text('experience_level'), technologies: text('technologies'), goals: text('goals'), explicitMemory: text('explicit_memory'), memoryEnabled: boolean('memory_enabled').default(true).notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+export const memories = pgTable('memories', {
+  id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), content: text('content').notNull(), source: text('source').notNull().default('explicit'), importance: real('importance').notNull().default(0.5), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => ({ userUpdated: index('memories_user_updated_idx').on(t.userId, t.updatedAt) }))
 export const conversations = pgTable('conversations', {
   id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), title: text('title').notNull().default('New conversation'), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => ({ userUpdated: index('conversations_user_updated_idx').on(t.userId, t.updatedAt) }))
