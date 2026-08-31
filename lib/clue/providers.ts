@@ -4,7 +4,6 @@ export type AIProvider = { id: string; label: string; stream: (messages: ChatMes
 const encoder = new TextEncoder()
 const configured = (...names: string[]) => { for (const name of names) { const value = process.env[name]?.trim(); if (value) return value } return '' }
 
-const REQUEST_TIMEOUT = 20_000
 const NON_STREAM_TIMEOUT = 20_000
 
 function combinedSignal(signal: AbortSignal | undefined, controller: AbortController, timeoutMs: number) {
@@ -12,19 +11,45 @@ function combinedSignal(signal: AbortSignal | undefined, controller: AbortContro
   return signal ? AbortSignal.any([signal, controller.signal, timeout]) : AbortSignal.any([controller.signal, timeout])
 }
 
-async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal) {
+async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, fallbackModels: string[] = []) {
   const controller = new AbortController()
   const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: 0.4,
+    max_tokens: 700,
+    stream: false,
+  }
+  // OpenRouter supports a models array for automatic model failover. This is
+  // preferable to making serial requests from Vercel because OpenRouter can
+  // immediately skip rate-limited/down providers and try the next model.
+  if (isOpenRouter && fallbackModels.length) body.models = [model, ...fallbackModels.filter((item) => item && item !== model)]
+
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST', signal: combined,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? { 'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app', 'X-Title': 'Clue' } : {}) },
-    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 700, stream: false }),
+    method: 'POST',
+    signal: combined,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...(isOpenRouter ? {
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app',
+        'X-Title': 'Clue',
+      } : {}),
+    },
+    body: JSON.stringify(body),
   })
-  if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 300)}` : ''}`) }
-  const json = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`)
+  }
+
+  const json = await response.json() as { choices?: Array<{ message?: { content?: string } }>; model?: string }
   const content = json.choices?.[0]?.message?.content
   if (typeof content !== 'string' || !content.trim()) throw new Error('AI provider returned an empty response.')
+  console.info(`[Clue AI] response received from ${json.model || model}`)
   return content
 }
 
@@ -32,24 +57,13 @@ function textStream(content: string) {
   return new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(encoder.encode(content)); controller.close() } })
 }
 
-function openAICompatible(id: string, label: string, baseUrl: string, apiKey: string, model: string, fallbackModel?: string): AIProvider {
+function openAICompatible(id: string, label: string, baseUrl: string, apiKey: string, model: string, fallbackModels: string[] = []): AIProvider {
   return {
-    id, label,
+    id,
+    label,
     async stream(messages, signal) {
-      const candidates = [model, fallbackModel].filter(Boolean) as string[]
-      let lastError: unknown = null
-      for (const candidate of candidates) {
-        try {
-          const content = await requestNonStreaming(baseUrl, apiKey, candidate, messages, signal)
-          console.info(`[Clue AI] response received from ${candidate}`)
-          return textStream(content)
-        } catch (error) {
-          lastError = error
-          if (signal?.aborted) throw error
-          console.warn(`[Clue AI] ${candidate} failed; trying fallback.`)
-        }
-      }
-      throw lastError instanceof Error ? lastError : new Error('AI provider did not respond in time.')
+      const content = await requestNonStreaming(baseUrl, apiKey, model, messages, signal, fallbackModels)
+      return textStream(content)
     },
   }
 }
@@ -58,12 +72,46 @@ export function getProvider(requested?: string): AIProvider | null {
   const premiumKey = configured('PREMIUM_AI_API_KEY')
   const freeKey = configured('OPENROUTER_API_KEY', 'AI_API_KEY')
   const fallbackKey = configured('FALLBACK_AI_API_KEY')
-  if (requested === 'premium' && premiumKey) return openAICompatible('premium', 'Premium model', configured('PREMIUM_AI_BASE_URL') || 'https://api.openai.com/v1', premiumKey, configured('PREMIUM_AI_MODEL') || 'gpt-4o-mini')
-  if (freeKey) {
-    const configuredModel = configured('AI_MODEL') || 'openai/gpt-oss-20b:free'
-    const model = configuredModel === 'openrouter/free' ? 'openai/gpt-oss-20b:free' : configuredModel
-    return openAICompatible('free', 'Free model', configured('AI_BASE_URL') || 'https://openrouter.ai/api/v1', freeKey, model, 'google/gemma-4-26b-a4b-it:free')
+
+  if (requested === 'premium' && premiumKey) {
+    return openAICompatible(
+      'premium',
+      'Premium model',
+      configured('PREMIUM_AI_BASE_URL') || 'https://api.openai.com/v1',
+      premiumKey,
+      configured('PREMIUM_AI_MODEL') || 'gpt-4o-mini',
+    )
   }
-  if (fallbackKey) return openAICompatible('fallback', 'Fallback model', configured('FALLBACK_AI_BASE_URL') || 'https://api.openai.com/v1', fallbackKey, configured('FALLBACK_AI_MODEL') || 'gpt-4o-mini')
+
+  if (freeKey) {
+    const configuredModel = configured('AI_MODEL') || 'openrouter/free'
+    const model = configuredModel === 'openrouter/free' ? 'openai/gpt-oss-20b:free' : configuredModel
+    const fallbackModels = [
+      'openai/gpt-oss-120b:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'qwen/qwen3-coder:free',
+      'google/gemma-4-31b-it:free',
+      'google/gemma-4-26b-a4b-it:free',
+    ]
+    return openAICompatible(
+      'free',
+      'Free model',
+      configured('AI_BASE_URL') || 'https://openrouter.ai/api/v1',
+      freeKey,
+      model,
+      fallbackModels,
+    )
+  }
+
+  if (fallbackKey) {
+    return openAICompatible(
+      'fallback',
+      'Fallback model',
+      configured('FALLBACK_AI_BASE_URL') || 'https://api.openai.com/v1',
+      fallbackKey,
+      configured('FALLBACK_AI_MODEL') || 'gpt-4o-mini',
+    )
+  }
+
   return null
 }
