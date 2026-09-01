@@ -95,10 +95,7 @@ export async function POST(request: Request) {
         if (saved?.length) context.push(`SAVED MEMORIES\n${saved.map(m => `- ${m.content}`).join('\n')}`)
       }
       const files = await withTimeout(db.select({ id: generatedFiles.id, name: generatedFiles.name, mimeType: generatedFiles.mimeType, contentText: generatedFiles.contentText, createdAt: generatedFiles.createdAt }).from(generatedFiles).where(eq(generatedFiles.userId, user.id)).orderBy(desc(generatedFiles.createdAt)).limit(20), 1200)
-      if (files?.length) {
-        const recall = files.map(f => `FILE ${f.id}\nName: ${f.name}\nType: ${f.mimeType}\nCreated: ${f.createdAt.toISOString()}\nContent:\n${(f.contentText || '(binary file; no extracted text)').slice(0, 12000)}`).join('\n\n')
-        context.push(`GENERATED FILE WORKSPACE\nThe following are files actually created by Clue for this user. Use them as authoritative workspace context when relevant.\n${recall.slice(0, 120000)}`)
-      }
+      if (files?.length) { const recall = files.map(f => `FILE ${f.id}\nName: ${f.name}\nType: ${f.mimeType}\nCreated: ${f.createdAt.toISOString()}\nContent:\n${(f.contentText || '(binary file; no extracted text)').slice(0, 12000)}`).join('\n\n'); context.push(`GENERATED FILE WORKSPACE\nThe following are files actually created by Clue for this user. Use them as authoritative workspace context when relevant.\n${recall.slice(0, 120000)}`) }
     }
     if (parsed.data.userContext) context.push(`CURRENT CLIENT PROFILE CONTEXT\n${JSON.stringify(parsed.data.userContext)}`)
     const incoming = parsed.data.messages.filter(m => m.role !== 'system') as ChatMessage[]
@@ -110,12 +107,11 @@ export async function POST(request: Request) {
     if (fileIntent) {
       if (!user) return NextResponse.json({ error: 'Sign in to create downloadable files.' }, { status: 401 })
       const file = await executeFileIntent(fileIntent)
-      if (parsed.data.conversationId) {
-        const [conversation] = await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, parsed.data.conversationId)).limit(1)
-        if (conversation) {
-          await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: Buffer.from(file.bytes, 'base64'), contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request } })
-        }
-      }
+      const requestedConversationId = parsed.data.conversationId
+      const [conversation] = requestedConversationId
+        ? await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, requestedConversationId)).limit(1)
+        : await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.userId, user.id)).orderBy(desc(conversations.updatedAt)).limit(1)
+      if (conversation) await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: Buffer.from(file.bytes, 'base64'), contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request } })
       return NextResponse.json({ type: 'file', text: file.text, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store' } })
     }
 
