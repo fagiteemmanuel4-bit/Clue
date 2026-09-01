@@ -64,6 +64,13 @@ async function composeWithAI(intent: FileIntent): Promise<Composed> {
   return extractJson(content)
 }
 
+function contentForRecall(content: Composed) {
+  if (content.rows?.length) return content.rows.map(row => row.join('\t')).join('\n')
+  if (content.slides?.length) return content.slides.map(slide => `# ${slide.title}\n${slide.text}`).join('\n\n')
+  if (content.files?.length) return content.files.map(file => `## ${file.name}\n${file.content}`).join('\n\n')
+  return content.text || ''
+}
+
 export async function executeFileIntent(intent: FileIntent) {
   const content = await composeWithAI(intent)
   if (!content.title) content.title = intent.title
@@ -83,6 +90,7 @@ export async function executeFileIntent(intent: FileIntent) {
     type: mime[intent.format],
     size: data.byteLength,
     bytes: Buffer.from(data).toString('base64'),
+    contentText: contentForRecall(content),
     text: `I've created **${intent.filename}** with the requested content. Use the download button on the file card to save it.`,
   }
 }
