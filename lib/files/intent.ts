@@ -7,19 +7,18 @@ export type FileIntent = {
   text: string
 }
 
-const rules: Array<{ format: FileFormat; patterns: RegExp[]; ext: string; label: string }> = [
-  { format: 'docx', patterns: [/\b(word|docx|document)\b/i, /\bformal business letter\b/i], ext: '.docx', label: 'Word document' },
-  { format: 'pdf', patterns: [/\bpdf\b/i, /\bportable document\b/i], ext: '.pdf', label: 'PDF document' },
-  { format: 'xlsx', patterns: [/\b(excel|xlsx|spreadsheet)\b/i], ext: '.xlsx', label: 'Excel spreadsheet' },
-  { format: 'pptx', patterns: [/\b(powerpoint|pptx|presentation|slides?)\b/i], ext: '.pptx', label: 'PowerPoint presentation' },
-  { format: 'zip', patterns: [/\bzip\b/i, /\b(zip archive|project folder)\b/i], ext: '.zip', label: 'ZIP archive' },
+const rules: Array<{ format: FileFormat; patterns: RegExp[]; label: string }> = [
+  { format: 'docx', patterns: [/\b(word|docx|document)\b/i, /\bformal business letter\b/i], label: 'Word document' },
+  { format: 'pdf', patterns: [/\bpdf\b/i, /\bportable document\b/i], label: 'PDF document' },
+  { format: 'xlsx', patterns: [/\b(excel|xlsx|spreadsheet)\b/i], label: 'Excel spreadsheet' },
+  { format: 'pptx', patterns: [/\b(powerpoint|pptx|presentation|slides?)\b/i], label: 'PowerPoint presentation' },
+  { format: 'zip', patterns: [/\bzip\b/i, /\b(zip archive|project folder)\b/i], label: 'ZIP archive' },
 ]
 
 export function detectFileIntent(prompt: string): FileIntent | null {
   if (!/\b(create|make|generate|prepare|produce|build|export)\b/i.test(prompt)) return null
   const rule = rules.find(r => r.patterns.some(p => p.test(prompt)))
   if (!rule) return null
-
   const titleMatch = prompt.match(/(?:called|named|titled)\s+["']?([^"'\n]+)["']?/i)
   const title = titleMatch?.[1]?.trim() || (rule.format === 'docx' && /formal business letter/i.test(prompt) ? 'Formal Business Letter' : 'Clue Document')
   const filename = fileNameFor(rule.format, title)
@@ -30,7 +29,14 @@ export function detectFileIntent(prompt: string): FileIntent | null {
 }
 
 export async function executeFileIntent(intent: FileIntent) {
-  const data = await generators[intent.format]({ title: intent.title, text: intent.text })
+  const content = intent.format === 'zip'
+    ? { title: intent.title, text: intent.text, files: [{ name: 'README.md', content: `# ${intent.title}\n\n${intent.text}\n` }] }
+    : intent.format === 'xlsx'
+      ? { title: intent.title, text: intent.text, rows: [['Clue', 'Generated file'], ['Title', intent.title], ['Content', intent.text]] }
+      : intent.format === 'pptx'
+        ? { title: intent.title, text: intent.text, slides: [{ title: intent.title, text: intent.text }] }
+        : { title: intent.title, text: intent.text }
+  const data = await generators[intent.format](content)
   const mime: Record<FileFormat, string> = {
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     pdf: 'application/pdf',
