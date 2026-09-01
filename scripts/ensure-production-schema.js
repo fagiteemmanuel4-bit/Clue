@@ -5,6 +5,7 @@ async function main() {
   if (!url) { console.log('DATABASE_URL not present; skipping production schema check.'); return }
   const sql = neon(url)
   const statements = [
+    `CREATE TABLE IF NOT EXISTS public.user_profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid UNIQUE REFERENCES public.users(id) ON DELETE CASCADE, name text, profession text, uses jsonb DEFAULT '[]'::jsonb NOT NULL, communication_style text, experience_level text, technologies text, goals text, explicit_memory text, memory_enabled boolean DEFAULT true NOT NULL, updated_at timestamptz DEFAULT now() NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS public.memories (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE, content text NOT NULL, source text NOT NULL DEFAULT 'explicit', importance real NOT NULL DEFAULT 0.5, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
     `CREATE INDEX IF NOT EXISTS memories_user_updated_idx ON public.memories(user_id, updated_at)`,
     `ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS user_id uuid`,
