@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import './clue-overrides.css'
+import './clue-live.css'
 
 export const metadata: Metadata = {
   title: 'Clue',
