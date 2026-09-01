@@ -3,6 +3,7 @@ import './globals.css'
 import './clue-overrides.css'
 import './clue-live.css'
 import './file-workspace.css'
+import './history-menu-fix.css'
 import FileWorkspaceDock from './components/file-workspace-dock'
 
 export const metadata: Metadata = {
