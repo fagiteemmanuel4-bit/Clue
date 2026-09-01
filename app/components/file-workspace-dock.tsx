@@ -12,10 +12,11 @@ export default function FileWorkspaceDock() {
   useEffect(() => {
     if (window.location.pathname !== '/') return
     setVisible(true)
-    fetch('/api/files').then(async r => r.ok ? (await r.json()).files : []).then(rows => Array.isArray(rows) && setFiles(rows)).catch(() => {})
-    const onFocus = () => fetch('/api/files').then(async r => r.ok ? (await r.json()).files : []).then(rows => Array.isArray(rows) && setFiles(rows)).catch(() => {})
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    const refresh = () => fetch('/api/files').then(async r => r.ok ? (await r.json()).files : []).then(rows => Array.isArray(rows) && setFiles(rows)).catch(() => {})
+    refresh()
+    const timer = window.setInterval(refresh, 4000)
+    window.addEventListener('focus', refresh)
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh) }
   }, [])
   if (!visible || !files.length) return null
   return <>
