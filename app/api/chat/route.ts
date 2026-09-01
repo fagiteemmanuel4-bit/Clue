@@ -7,6 +7,7 @@ import { memories, userProfiles } from '@/db/schema'
 import { desc, eq } from 'drizzle-orm'
 import { CONVERSATION_SKILLS_PROMPT } from '@/lib/clue/conversation-skills'
 import { ADVANCED_SKILLS_PROMPT } from '@/lib/clue/advanced-skills'
+import { detectFileIntent, executeFileIntent } from '@/lib/files/intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -14,7 +15,6 @@ export const maxDuration = 60
 
 const messageSchema = z.object({ role: z.enum(['system', 'user', 'assistant']), content: z.string().min(1).max(100_000) })
 const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), userContext: z.record(z.string(), z.unknown()).optional(), guestRemaining: z.number().int().min(0).max(20).optional() })
-const GUEST_LIMIT = 20
 const CLUE_SYSTEM = `You are Clue, a highly capable general-purpose AI assistant and intelligent workspace partner.
 
 CORE BEHAVIOR
@@ -92,10 +92,21 @@ export async function POST(request: Request) {
     }
     if (parsed.data.userContext) context.push(`CURRENT CLIENT PROFILE CONTEXT\n${JSON.stringify(parsed.data.userContext)}`)
     const incoming = parsed.data.messages.filter(m => m.role !== 'system') as ChatMessage[]
+    const latestUserPrompt = [...incoming].reverse().find(m => m.role === 'user')?.content || ''
     const remaining = parsed.data.guestRemaining
     if (!user && remaining !== undefined && remaining <= 3 && remaining > 0) {
       context.push(`GUEST LIMIT NOTICE\nThis guest has approximately ${remaining} message${remaining === 1 ? '' : 's'} remaining before the 20-message guest allowance. Briefly mention this near the end of your response. Do not make it the focus.`)
     }
+
+    // Clue-owned deterministic file tool. This runs before model inference so file requests
+    // cannot fall through to the model and become implementation code.
+    const fileIntent = detectFileIntent(latestUserPrompt)
+    if (fileIntent) {
+      if (!user) return NextResponse.json({ error: 'Sign in to create downloadable files.' }, { status: 401 })
+      const file = await executeFileIntent(fileIntent)
+      return NextResponse.json({ type: 'file', text: file.text, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store' } })
+    }
+
     const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}` }
     const provider = getProvider(parsed.data.model)
     if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
