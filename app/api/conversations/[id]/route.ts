@@ -1,4 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { db } from '@/db'
 import { conversations, messages } from '@/db/schema'
 import { parseJson, uuidSchema } from '@/lib/api'
