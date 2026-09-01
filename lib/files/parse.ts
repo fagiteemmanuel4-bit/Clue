@@ -47,7 +47,9 @@ async function parsePptx(buffer: Buffer) {
 
 async function parseXlsx(buffer: Buffer) {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
+  // ExcelJS's Node typings currently accept the legacy Buffer shape while
+  // Node 20 exposes Buffer<ArrayBufferLike>. Keep the runtime value intact.
+  await workbook.xlsx.load(buffer as unknown as Buffer);
   const rows: Record<string, string>[] = [];
   const text: string[] = [];
   workbook.eachSheet((sheet) => {
@@ -102,7 +104,6 @@ export async function parseUploadedFile(file: File) {
   } else if (lower.endsWith('.txt') || lower.endsWith('.md') || file.type.startsWith('text/')) {
     text = buffer.toString('utf8');
   } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
-    // PDF extraction is delegated to the optional PDF parser when installed.
     const mod = await import('pdf-parse');
     const parsed = await mod.default(buffer);
     text = parsed.text || '';
