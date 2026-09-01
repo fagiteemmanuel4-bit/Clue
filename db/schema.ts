@@ -1,4 +1,6 @@
-import { pgEnum, pgTable, text, timestamp, uuid, real, index, boolean, jsonb } from 'drizzle-orm/pg-core'
+import { pgEnum, pgTable, text, timestamp, uuid, real, index, boolean, jsonb, integer, customType } from 'drizzle-orm/pg-core'
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' })
 
 export const messageRole = pgEnum('message_role', ['user', 'assistant'])
 export const contentType = pgEnum('content_type', ['text', 'voice'])
@@ -20,6 +22,10 @@ export const conversations = pgTable('conversations', {
 export const messages = pgTable('messages', {
   id: uuid('id').defaultRandom().primaryKey(), conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }), role: messageRole('role').notNull(), contentText: text('content_text').notNull(), contentType: contentType('content_type').default('text').notNull(), audioUrl: text('audio_url'), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => ({ conversationCreated: index('messages_conversation_created_idx').on(t.conversationId, t.createdAt) }))
+export const generatedFiles = pgTable('generated_files', {
+  id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
+  name: text('name').notNull(), mimeType: text('mime_type').notNull(), size: integer('size').notNull(), data: bytea('data').notNull(), contentText: text('content_text'), metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => ({ userCreated: index('generated_files_user_created_idx').on(t.userId, t.createdAt), conversationCreated: index('generated_files_conversation_created_idx').on(t.conversationId, t.createdAt) }))
 export const voiceSettings = pgTable('voice_settings', {
   id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }), accent: text('accent').notNull().default('neutral'), speed: real('speed').notNull().default(1), pitch: real('pitch').notNull().default(0), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
