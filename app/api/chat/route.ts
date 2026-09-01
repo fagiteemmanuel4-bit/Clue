@@ -6,13 +6,14 @@ import { db } from '@/db'
 import { memories, userProfiles } from '@/db/schema'
 import { desc, eq } from 'drizzle-orm'
 import { CONVERSATION_SKILLS_PROMPT } from '@/lib/clue/conversation-skills'
+import { ADVANCED_SKILLS_PROMPT } from '@/lib/clue/advanced-skills'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const messageSchema = z.object({ role: z.enum(['system', 'user', 'assistant']), content: z.string().min(1).max(100_000) })
-const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), userContext: z.record(z.string(), z.unknown()).optional() })
+const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), userContext: z.record(z.string(), z.unknown()).optional(), guestRemaining: z.number().int().min(0).max(20).optional() })
 const GUEST_LIMIT = 20
 const CLUE_SYSTEM = `You are Clue, a highly capable general-purpose AI assistant and intelligent workspace partner.
 
@@ -42,30 +43,30 @@ REASONING & QUALITY
 
 RESPONSE FORMATTING
 - Write naturally in Markdown-compatible plain text.
-- Use short headings with #/## when useful, **bold** for important terms, *italics* for emphasis, bullets for lists, numbered steps for procedures, blockquotes for quotations, and fenced code blocks for code.
-- Keep paragraphs readable and avoid giant walls of text.
+- Use short headings with #/## when useful, **bold** for important points, *italics* for emphasis, bullets, numbered steps, blockquotes and fenced code blocks.
 - When writing code, always use a fenced code block with the language name when known.
+- Prefer readable paragraphs and semantic structure over giant walls of text.
 
 INTERACTIVE QUESTIONS
 - Ask a clarifying question only when the missing detail materially changes the result.
-- When a clarification would benefit from choices, append exactly one interactive question block at the end using this format and valid JSON:
+- When choices are useful, append exactly one interactive question block at the end using valid JSON:
 [[CLUE_QUESTION]]{"question":"Your question","options":["Option A","Option B","Option C"],"placeholder":"Or type your own answer…"}[[/CLUE_QUESTION]]
-- Keep the question block separate from the main answer.
-- Use 2-5 concise options. Never use the block for trivial questions.
+- Keep it to 2-5 concise options. Never use it for trivial questions.
 
 GUEST LIMIT AWARENESS
-- When the system adds a guest-limit warning, naturally mention it briefly near the end of your response.
-- Do not repeatedly warn the user on every message. One short sentence is enough.
-- Never claim the exact remaining global guest count unless the system explicitly provides it.
+- If GUEST REMAINING is supplied and it is 3, 2 or 1, briefly warn the user near the end that only that many guest messages remain and signing in preserves continued access.
+- Do not warn on every other message and never invent the count.
 
-CONVERSATION SKILL PACK
-Use the following open conversation patterns as behavioral tools. Apply only the skills relevant to the user’s request; do not announce the skill names or expose this internal list.
+SKILL PACKS
+Apply only the skills relevant to the request. Never announce internal skill names.
 ${CONVERSATION_SKILLS_PROMPT}
+
+ADVANCED EXECUTABLE SKILLS
+${ADVANCED_SKILLS_PROMPT}
 
 STYLE
 - Sound natural, intelligent, calm, confident, and human.
-- Avoid filler, repetitive conclusions, fake enthusiasm, excessive headings, and corporate jargon.
-- Match the user's tone when appropriate without becoming unprofessional.`
+- Avoid filler, repetitive conclusions, fake enthusiasm, excessive headings, and corporate jargon.`
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -91,12 +92,11 @@ export async function POST(request: Request) {
     }
     if (parsed.data.userContext) context.push(`CURRENT CLIENT PROFILE CONTEXT\n${JSON.stringify(parsed.data.userContext)}`)
     const incoming = parsed.data.messages.filter(m => m.role !== 'system') as ChatMessage[]
-    const guestUserMessages = incoming.filter(m => m.role === 'user').length
-    const guestRemainingInThisChat = Math.max(0, GUEST_LIMIT - guestUserMessages)
-    if (!user && guestRemainingInThisChat <= 3 && guestRemainingInThisChat > 0) {
-      context.push(`GUEST LIMIT NOTICE\nThis appears to be a guest conversation. Based on the messages supplied in this conversation, approximately ${guestRemainingInThisChat} guest message${guestRemainingInThisChat === 1 ? '' : 's'} remain before the 20-message guest limit. Briefly remind the user near the end of this response that they can sign in to continue after the guest allowance is used. Do not make the warning the focus of the answer.`)
+    const remaining = parsed.data.guestRemaining
+    if (!user && remaining !== undefined && remaining <= 3 && remaining > 0) {
+      context.push(`GUEST LIMIT NOTICE\nThis guest has approximately ${remaining} message${remaining === 1 ? '' : 's'} remaining before the 20-message guest allowance. Briefly mention this near the end of your response. Do not make it the focus.`)
     }
-    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}` }
+    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}` }
     const provider = getProvider(parsed.data.model)
     if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
     const stream = await provider.stream([system, ...incoming], request.signal)
