@@ -13,6 +13,7 @@ export const maxDuration = 60
 
 const messageSchema = z.object({ role: z.enum(['system', 'user', 'assistant']), content: z.string().min(1).max(100_000) })
 const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), userContext: z.record(z.string(), z.unknown()).optional() })
+const GUEST_LIMIT = 20
 const CLUE_SYSTEM = `You are Clue, a highly capable general-purpose AI assistant and intelligent workspace partner.
 
 CORE BEHAVIOR
@@ -52,6 +53,11 @@ INTERACTIVE QUESTIONS
 - Keep the question block separate from the main answer.
 - Use 2-5 concise options. Never use the block for trivial questions.
 
+GUEST LIMIT AWARENESS
+- When the system adds a guest-limit warning, naturally mention it briefly near the end of your response.
+- Do not repeatedly warn the user on every message. One short sentence is enough.
+- Never claim the exact remaining global guest count unless the system explicitly provides it.
+
 CONVERSATION SKILL PACK
 Use the following open conversation patterns as behavioral tools. Apply only the skills relevant to the user’s request; do not announce the skill names or expose this internal list.
 ${CONVERSATION_SKILLS_PROMPT}
@@ -85,6 +91,11 @@ export async function POST(request: Request) {
     }
     if (parsed.data.userContext) context.push(`CURRENT CLIENT PROFILE CONTEXT\n${JSON.stringify(parsed.data.userContext)}`)
     const incoming = parsed.data.messages.filter(m => m.role !== 'system') as ChatMessage[]
+    const guestUserMessages = incoming.filter(m => m.role === 'user').length
+    const guestRemainingInThisChat = Math.max(0, GUEST_LIMIT - guestUserMessages)
+    if (!user && guestRemainingInThisChat <= 3 && guestRemainingInThisChat > 0) {
+      context.push(`GUEST LIMIT NOTICE\nThis appears to be a guest conversation. Based on the messages supplied in this conversation, approximately ${guestRemainingInThisChat} guest message${guestRemainingInThisChat === 1 ? '' : 's'} remain before the 20-message guest limit. Briefly remind the user near the end of this response that they can sign in to continue after the guest allowance is used. Do not make the warning the focus of the answer.`)
+    }
     const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}` }
     const provider = getProvider(parsed.data.model)
     if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
