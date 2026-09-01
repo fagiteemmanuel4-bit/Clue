@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       zip:'application/zip'
     }
-    return new Response(data, { status:200, headers:{ 'Content-Type':mime[format], 'Content-Disposition':`attachment; filename="${fileNameFor(format, filename)}"`, 'Cache-Control':'private, no-store' } })
+    return new Response(new Uint8Array(data), { status:200, headers:{ 'Content-Type':mime[format], 'Content-Disposition':`attachment; filename="${fileNameFor(format, filename)}"`, 'Cache-Control':'private, no-store' } })
   } catch (error) {
     console.error('[Clue files] generation failed:', error)
     return NextResponse.json({ error:'File generation failed. Please try again.' }, { status:500 })
