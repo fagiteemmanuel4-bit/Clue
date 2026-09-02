@@ -1,11 +1,13 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Copy, Download, Play, Save, Sparkles, X, Terminal, Trash2 } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Play, Save, Sparkles, X, Terminal, Trash2, Plus, History, RotateCcw } from 'lucide-react'
 import './canvas.css'
 
 type Language = 'javascript' | 'typescript' | 'python' | 'json' | 'html' | 'css' | 'sql' | 'markdown'
+type CanvasVersion={id:string;code:string;language:Language;createdAt:number}
+type CanvasDoc={id:string;title:string;code:string;language:Language;versions:CanvasVersion[]}
 
 const templates: Record<Language, string> = {
   javascript: `function greet(name) {\n  return \`Hello, ${'${name}'}!\`;\n}\n\nconsole.log(greet('Clue'));`,
@@ -17,94 +19,32 @@ const templates: Record<Language, string> = {
   sql: `SELECT name, COUNT(*) AS total\nFROM users\nGROUP BY name\nORDER BY total DESC;`,
   markdown: `# Clue Canvas\n\nWrite ideas, notes, code, or documentation here.\n\n- Fast editing\n- Language aware\n- Exportable`,
 }
-
 function escapeHtml(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
-function highlight(code: string, language: Language) {
-  const stash: string[] = []
-  const mark = (html: string) => { const id = stash.push(html) - 1; return `\u0001${String.fromCharCode(0xe000 + id)}\u0002` }
-  let source = escapeHtml(code)
-  if (language === 'html') {
-    source = source.replace(/(&lt;\/?)([\w-]+)/g, (_, open, tag) => `${open}${mark(`<span class="tok-keyword">${tag}</span>`)}`)
-    source = source.replace(/([\w-]+)=(&quot;.*?&quot;|&quot;[^&]*&quot;)/g, (_, key, value) => `${mark(`<span class="tok-property">${key}</span>`)}=${value}`)
-  } else {
-    source = source.replace(/(\/\/.*)$/gm, match => mark(`<span class="tok-comment">${match}</span>`))
-    source = source.replace(/(&quot;[^&]*?&quot;|'[^']*'|`[^`]*`)/g, match => mark(`<span class="tok-string">${match}</span>`))
-    if (language === 'sql') source = source.replace(/\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|AS|JOIN|ON|COUNT|DESC|ASC)\b/gi, match => mark(`<span class="tok-keyword">${match}</span>`))
-    else if (language === 'markdown') {
-      source = source.replace(/^(#{1,6}.*)$/gm, match => mark(`<span class="tok-heading">${match}</span>`))
-      source = source.replace(/^(\s*[-*]\s.*)$/gm, match => mark(`<span class="tok-comment">${match}</span>`))
-    } else source = source.replace(/\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|def|print|in|True|False|None|type|interface)\b/g, match => mark(`<span class="tok-keyword">${match}</span>`))
-    source = source.replace(/\b(true|false|null)\b/g, match => mark(`<span class="tok-keyword">${match}</span>`))
-    source = source.replace(/\b\d+(?:\.\d+)?\b/g, match => mark(`<span class="tok-number">${match}</span>`))
-    if (language === 'css') source = source.replace(/([\w-]+)(?=\s*:)/g, match => mark(`<span class="tok-property">${match}</span>`))
-  }
-  return source.replace(/\u0001([\ue000-\uf8ff])\u0002/g, (_, token) => stash[token.charCodeAt(0) - 0xe000])
-}
+function highlight(code: string, language: Language) { const stash:string[]=[]; const mark=(html:string)=>{const id=stash.push(html)-1;return `\u0001${String.fromCharCode(0xe000+id)}\u0002`}; let source=escapeHtml(code); if(language==='html'){source=source.replace(/(&lt;\/?)([\w-]+)/g,(_,open,tag)=>`${open}${mark(`<span class="tok-keyword">${tag}</span>`)}`)}else{source=source.replace(/(\/\/.*)$/gm,m=>mark(`<span class="tok-comment">${m}</span>`));source=source.replace(/(&quot;[^&]*?&quot;|'[^']*'|`[^`]*`)/g,m=>mark(`<span class="tok-string">${m}</span>`));if(language==='sql')source=source.replace(/\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|AS|JOIN|ON|COUNT|DESC|ASC)\b/gi,m=>mark(`<span class="tok-keyword">${m}</span>`));else if(language==='markdown'){source=source.replace(/^(#{1,6}.*)$/gm,m=>mark(`<span class="tok-heading">${m}</span>`));source=source.replace(/^(\s*[-*]\s.*)$/gm,m=>mark(`<span class="tok-comment">${m}</span>`))}else source=source.replace(/\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|def|print|in|True|False|None|type|interface)\b/g,m=>mark(`<span class="tok-keyword">${m}</span>`));source=source.replace(/\b(true|false|null)\b/g,m=>mark(`<span class="tok-keyword">${m}</span>`));source=source.replace(/\b\d+(?:\.\d+)?\b/g,m=>mark(`<span class="tok-number">${m}</span>`));if(language==='css')source=source.replace(/([\w-]+)(?=\s*:)/g,m=>mark(`<span class="tok-property">${m}</span>`))}return source.replace(/\u0001([\ue000-\uf8ff])\u0002/g,(_,token)=>stash[token.charCodeAt(0)-0xe000]) }
+function loadPyodide(){return new Promise<any>((resolve,reject)=>{const existing=(window as any).loadPyodide;if(existing){existing({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/'}).then(resolve).catch(reject);return}const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/pyodide/v0.28.2/full/pyodide.js';script.onload=()=> (window as any).loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/'}).then(resolve).catch(reject);script.onerror=()=>reject(new Error('Python runtime could not be loaded. Check your internet connection.'));document.head.appendChild(script)})}
+function GuestTerminal({code}:{code:string}){const[terminalOpen,setTerminalOpen]=useState(false),[terminalLanguage,setTerminalLanguage]=useState<'python'|'javascript'>('python'),[terminalCode,setTerminalCode]=useState(code),[output,setOutput]=useState<string[]>([]),[running,setRunning]=useState(false);const run=async()=>{setRunning(true);setOutput(prev=>[...prev,`$ ${terminalLanguage==='python'?'python':'node'} canvas`,'']);try{if(terminalLanguage==='python'){const pyodide=await loadPyodide();const lines:string[]=[];pyodide.setStdout({batched:(value:string)=>lines.push(value)});pyodide.setStderr({batched:(value:string)=>lines.push(value)});await pyodide.runPythonAsync(terminalCode);setOutput(prev=>[...prev,...(lines.length?lines:['Process exited successfully.'])])}else{const lines:string[]=[];const original=console.log;console.log=(...args:unknown[])=>lines.push(args.map(String).join(' '));try{new Function(terminalCode)()}finally{console.log=original}setOutput(prev=>[...prev,...(lines.length?lines:['Process exited successfully.'])])}}catch(error){setOutput(prev=>[...prev,`Error: ${error instanceof Error?error.message:String(error)}`])}finally{setRunning(false)}};return <div className={`terminal-panel ${terminalOpen?'open':''}`}><div className="terminal-head"><button className="terminal-launch" onClick={()=>setTerminalOpen(v=>!v)}><Terminal/>{terminalOpen?'Hide terminal':'Open terminal'}</button>{terminalOpen&&<div className="terminal-head-actions"><select value={terminalLanguage} onChange={e=>setTerminalLanguage(e.target.value as 'python'|'javascript')}><option value="python">Python</option><option value="javascript">JavaScript</option></select><button onClick={()=>setOutput([])} title="Clear output"><Trash2/></button><button className="primary" disabled={running} onClick={run}><Play/>{running?'Running…':'Run code'}</button></div>}</div>{terminalOpen&&<div className="terminal-body"><div className="terminal-editor"><textarea spellCheck={false} value={terminalCode} onChange={e=>setTerminalCode(e.target.value)} aria-label="Terminal code"/></div><pre className="terminal-output" aria-live="polite">{output.length?output.join('\n'):'Ready. Run Python or JavaScript here.\nPython runs locally in your browser.'}</pre></div>}</div>}
 
-function loadPyodide() {
-  return new Promise<any>((resolve, reject) => {
-    const existing = (window as any).loadPyodide
-    if (existing) { existing({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/' }).then(resolve).catch(reject); return }
-    const script = document.createElement('script')
-    script.src = 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/pyodide.js'
-    script.onload = () => (window as any).loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/' }).then(resolve).catch(reject)
-    script.onerror = () => reject(new Error('Python runtime could not be loaded. Check your internet connection.'))
-    document.head.appendChild(script)
-  })
-}
+function newDoc(title='Untitled document',language:Language='typescript'):CanvasDoc{return{id:crypto.randomUUID(),title,language,code:templates[language],versions:[]}}
+function storageKey(conversationId:string){return `clue.canvas.v2:${conversationId}`}
 
-function GuestTerminal({ code }: { code: string }) {
-  const [terminalOpen, setTerminalOpen] = useState(false)
-  const [terminalLanguage, setTerminalLanguage] = useState<'python' | 'javascript'>('python')
-  const [terminalCode, setTerminalCode] = useState(code)
-  const [output, setOutput] = useState<string[]>([])
-  const [running, setRunning] = useState(false)
-
-  const run = async () => {
-    setRunning(true)
-    setOutput(prev => [...prev, `$ ${terminalLanguage === 'python' ? 'python' : 'node'} canvas`, ''])
-    try {
-      if (terminalLanguage === 'python') {
-        const pyodide = await loadPyodide()
-        const lines: string[] = []
-        pyodide.setStdout({ batched: (value: string) => lines.push(value) })
-        pyodide.setStderr({ batched: (value: string) => lines.push(value) })
-        await pyodide.runPythonAsync(terminalCode)
-        setOutput(prev => [...prev, ...(lines.length ? lines : ['Process exited successfully.'])])
-      } else {
-        const lines: string[] = []
-        const original = console.log
-        console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '))
-        try { new Function(terminalCode)() } finally { console.log = original }
-        setOutput(prev => [...prev, ...(lines.length ? lines : ['Process exited successfully.'])])
-      }
-    } catch (error) {
-      setOutput(prev => [...prev, `Error: ${error instanceof Error ? error.message : String(error)}`])
-    } finally { setRunning(false) }
-  }
-
-  return <div className={`terminal-panel ${terminalOpen ? 'open' : ''}`}>
-    <div className="terminal-head">
-      <button className="terminal-launch" onClick={() => setTerminalOpen(v => !v)}><Terminal/>{terminalOpen ? 'Hide terminal' : 'Open terminal'}</button>
-      {terminalOpen && <div className="terminal-head-actions"><select value={terminalLanguage} onChange={e => setTerminalLanguage(e.target.value as 'python' | 'javascript')}><option value="python">Python</option><option value="javascript">JavaScript</option></select><button onClick={() => setOutput([])} title="Clear output"><Trash2/></button><button className="primary" disabled={running} onClick={run}><Play/>{running ? 'Running…' : 'Run code'}</button></div>}
-    </div>
-    {terminalOpen && <div className="terminal-body"><div className="terminal-editor"><textarea spellCheck={false} value={terminalCode} onChange={e => setTerminalCode(e.target.value)} aria-label="Terminal code" /></div><pre className="terminal-output" aria-live="polite">{output.length ? output.join('\n') : 'Ready. Run Python or JavaScript here.\nPython runs locally in your browser.'}</pre></div>}
-  </div>
-}
-
-export default function CanvasPage() {
-  const [language, setLanguage] = useState<Language>('typescript')
-  const [code, setCode] = useState(templates.typescript)
-  const [saved, setSaved] = useState(false)
-  const [preview, setPreview] = useState(false)
-  const highlighted = useMemo(() => highlight(code, language), [code, language])
-  const changeLanguage = (next: Language) => { setLanguage(next); setCode(templates[next]); setSaved(false) }
-  const copy = async () => { await navigator.clipboard?.writeText(code); setSaved(true); setTimeout(() => setSaved(false), 1200) }
-  const download = () => { const blob = new Blob([code], { type: 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `clue-canvas.${language === 'typescript' ? 'ts' : language === 'javascript' ? 'js' : language === 'python' ? 'py' : language}`; a.click(); URL.revokeObjectURL(url) }
-  return <main className="canvas-page">
-    <header className="canvas-header"><div><Link href="/" className="canvas-back"><ArrowLeft/>Back to Clue</Link><div className="canvas-title"><Sparkles/><div><strong>Canvas</strong><span>Language-aware workspace · available to guests</span></div></div></div><div className="canvas-actions"><button onClick={copy}><Copy/>{saved ? 'Copied' : 'Copy'}</button><button onClick={download}><Download/>Export</button><button className="primary" onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 1200) }}><Save/>Save</button></div></header>
-    <section className="canvas-toolbar"><div className="language-tabs">{(Object.keys(templates) as Language[]).map(l => <button key={l} className={language === l ? 'active' : ''} onClick={() => changeLanguage(l)}>{l}</button>)}</div><button className="preview-toggle" onClick={() => setPreview(v => !v)}>{preview ? <X/> : <Play/>}{preview ? 'Close preview' : 'Preview'}</button></section>
-    <section className={`canvas-grid ${preview ? 'with-preview' : ''}`}><div className="editor-shell"><div className="editor-gutter">{code.split('\n').map((_, i) => <span key={i}>{i + 1}</span>)}</div><div className="editor-area"><pre aria-hidden dangerouslySetInnerHTML={{ __html: highlighted + '\n' }} /><textarea spellCheck={false} value={code} onChange={e => { setCode(e.target.value); setSaved(false) }} aria-label="Canvas editor" /></div></div>{preview && <div className="preview-shell"><div className="preview-head"><span>Preview</span><button onClick={() => setPreview(false)}><X/></button></div>{language === 'html' ? <iframe title="HTML preview" sandbox="allow-scripts" srcDoc={code}/> : <div className="preview-placeholder"><Sparkles/><strong>Live workspace preview</strong><p>Use the terminal below to actually run Python or JavaScript. HTML can still be previewed safely here.</p></div>}</div>}</section>
-    <GuestTerminal code={language === 'python' || language === 'javascript' ? code : templates.python} />
+export default function CanvasPage(){
+  const[conversationId,setConversationId]=useState('guest'),[docs,setDocs]=useState<CanvasDoc[]>([]),[activeId,setActiveId]=useState(''),[saved,setSaved]=useState(false),[preview,setPreview]=useState(false),[historyOpen,setHistoryOpen]=useState(false)
+  useEffect(()=>{const params=new URLSearchParams(window.location.search);const cid=params.get('conversation')||'guest';const did=params.get('doc');setConversationId(cid);try{const raw=localStorage.getItem(storageKey(cid));const loaded=raw?JSON.parse(raw):null;const list=Array.isArray(loaded)&&loaded.length?loaded:[newDoc()];setDocs(list);setActiveId(did&&list.some((d:CanvasDoc)=>d.id===did)?did:list[0].id)}catch{const d=newDoc();setDocs([d]);setActiveId(d.id)}},[])
+  useEffect(()=>{if(!docs.length||!activeId)return;try{localStorage.setItem(storageKey(conversationId),JSON.stringify(docs))}catch{};const p=new URLSearchParams(window.location.search);p.set('conversation',conversationId);p.set('doc',activeId);window.history.replaceState(null,'',`${window.location.pathname}?${p.toString()}`)},[docs,activeId,conversationId])
+  const active=docs.find(d=>d.id===activeId)||docs[0]; const language=active?.language||'typescript'; const code=active?.code||''; const highlighted=useMemo(()=>highlight(code,language),[code,language])
+  function update(patch:Partial<CanvasDoc>){if(!active)return;setDocs(xs=>xs.map(d=>d.id===active.id?{...d,...patch}:d));setSaved(false)}
+  function changeLanguage(next:Language){update({language:next,code:templates[next]})}
+  function save(){if(!active)return;const version:CanvasVersion={id:crypto.randomUUID(),code:active.code,language:active.language,createdAt:Date.now()};setDocs(xs=>xs.map(d=>d.id===active.id?{...d,versions:[...d.versions,version].slice(-20)}:d));setSaved(true);setTimeout(()=>setSaved(false),1200)}
+  async function copy(){await navigator.clipboard?.writeText(code);setSaved(true);setTimeout(()=>setSaved(false),1200)}
+  function download(){const ext=language==='typescript'?'ts':language==='javascript'?'js':language==='python'?'py':language;const blob=new Blob([code],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${(active?.title||'clue-canvas').replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.${ext}`;a.click();URL.revokeObjectURL(url)}
+  function addDocument(){const d=newDoc(`Document ${docs.length+1}`);setDocs(x=>[...x,d]);setActiveId(d.id);setHistoryOpen(false)}
+  function restore(v:CanvasVersion){update({code:v.code,language:v.language});setHistoryOpen(false)}
+  function removeDocument(id:string){if(docs.length<=1)return;const remaining=docs.filter(d=>d.id!==id);setDocs(remaining);if(activeId===id)setActiveId(remaining[0].id)}
+  return <main className="canvas-page"><header className="canvas-header"><div><Link href="/" className="canvas-back"><ArrowLeft/>Back to Clue</Link><div className="canvas-title"><Sparkles/><div><strong>Canvas</strong><span>{conversationId==='guest'?'Guest workspace':'Conversation workspace'} · multiple documents</span></div></div></div><div className="canvas-actions"><button onClick={copy}><Copy/>{saved?'Copied':'Copy'}</button><button onClick={download}><Download/>Export</button><button className="primary" onClick={save}><Save/>{saved?'Saved':'Save'}</button></div></header>
+    <section className="canvas-toolbar"><div className="document-tabs">{docs.map(d=><button key={d.id} className={d.id===activeId?'active':''} onClick={()=>setActiveId(d.id)}>{d.title}</button>)}<button onClick={addDocument} title="New document"><Plus/></button></div><div className="canvas-toolbar-right"><button onClick={()=>setHistoryOpen(v=>!v)}><History/>History</button><button className="preview-toggle" onClick={()=>setPreview(v=>!v)}>{preview?<X/>:<Play/>}{preview?'Close preview':'Preview'}</button></div></section>
+    {active&&<section className="canvas-meta"><input value={active.title} onChange={e=>update({title:e.target.value||'Untitled document'})} aria-label="Document title"/><button onClick={()=>removeDocument(active.id)} disabled={docs.length<=1} title="Delete document"><Trash2/></button>{historyOpen&&<div className="version-panel"><strong>Version history</strong>{active.versions.length?active.versions.slice().reverse().map(v=><button key={v.id} onClick={()=>restore(v)}><span>{new Date(v.createdAt).toLocaleString()}</span><RotateCcw/></button>):<small>No saved versions yet.</small>}</div>}</section>}
+    <section className={`canvas-toolbar language-bar`}><div className="language-tabs">{(Object.keys(templates) as Language[]).map(l=><button key={l} className={language===l?'active':''} onClick={()=>changeLanguage(l)}>{l}</button>)}</div></section>
+    <section className={`canvas-grid ${preview?'with-preview':''}`}><div className="editor-shell"><div className="editor-gutter">{code.split('\n').map((_,i)=><span key={i}>{i+1}</span>)}</div><div className="editor-area"><pre aria-hidden dangerouslySetInnerHTML={{__html:highlighted+'\n'}}/><textarea spellCheck={false} value={code} onChange={e=>update({code:e.target.value})} aria-label="Canvas editor"/></div></div>{preview&&<div className="preview-shell"><div className="preview-head"><span>Preview</span><button onClick={()=>setPreview(false)}><X/></button></div>{language==='html'?<iframe title="HTML preview" sandbox="allow-scripts" srcDoc={code}/>:<div className="preview-placeholder"><Sparkles/><strong>Live workspace preview</strong><p>Use the terminal below to actually run Python or JavaScript. HTML can still be previewed safely here.</p></div>}</div>}</section>
+    <GuestTerminal code={language==='python'||language==='javascript'?code:templates.python}/>
   </main>
 }
