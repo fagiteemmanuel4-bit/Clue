@@ -5,14 +5,14 @@ import './clue-live.css'
 import './file-workspace.css'
 import './history-menu-fix.css'
 import './workspace-tools.css'
+import './voice-tools.css'
 import FileWorkspaceDock from './components/file-workspace-dock'
 import WorkspaceLauncher from './components/workspace-launcher'
+import SourceCardsBridge from './components/source-cards-bridge'
+import VoiceConfirmation from './components/voice-confirmation'
 
-export const metadata: Metadata = {
-  title: 'Clue',
-  description: 'A calm, powerful AI workspace.',
-}
+export const metadata: Metadata = { title: 'Clue', description: 'A calm, powerful AI workspace.' }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}<FileWorkspaceDock/><WorkspaceLauncher/></body></html>
+  return <html lang="en"><body>{children}<FileWorkspaceDock/><WorkspaceLauncher/><SourceCardsBridge/><VoiceConfirmation/></body></html>
 }
