@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Copy, Download, Play, Save, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Play, Save, Sparkles, X, Terminal, Trash2 } from 'lucide-react'
 import './canvas.css'
 
 type Language = 'javascript' | 'typescript' | 'python' | 'json' | 'html' | 'css' | 'sql' | 'markdown'
@@ -41,6 +41,57 @@ function highlight(code: string, language: Language) {
   return source.replace(/\u0001([\ue000-\uf8ff])\u0002/g, (_, token) => stash[token.charCodeAt(0) - 0xe000])
 }
 
+function loadPyodide() {
+  return new Promise<any>((resolve, reject) => {
+    const existing = (window as any).loadPyodide
+    if (existing) { existing({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/' }).then(resolve).catch(reject); return }
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/pyodide.js'
+    script.onload = () => (window as any).loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.28.2/full/' }).then(resolve).catch(reject)
+    script.onerror = () => reject(new Error('Python runtime could not be loaded. Check your internet connection.'))
+    document.head.appendChild(script)
+  })
+}
+
+function GuestTerminal({ code }: { code: string }) {
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [terminalLanguage, setTerminalLanguage] = useState<'python' | 'javascript'>('python')
+  const [terminalCode, setTerminalCode] = useState(code)
+  const [output, setOutput] = useState<string[]>([])
+  const [running, setRunning] = useState(false)
+
+  const run = async () => {
+    setRunning(true)
+    setOutput(prev => [...prev, `$ ${terminalLanguage === 'python' ? 'python' : 'node'} canvas`, ''])
+    try {
+      if (terminalLanguage === 'python') {
+        const pyodide = await loadPyodide()
+        const lines: string[] = []
+        pyodide.setStdout({ batched: (value: string) => lines.push(value) })
+        pyodide.setStderr({ batched: (value: string) => lines.push(value) })
+        await pyodide.runPythonAsync(terminalCode)
+        setOutput(prev => [...prev, ...(lines.length ? lines : ['Process exited successfully.'])])
+      } else {
+        const lines: string[] = []
+        const original = console.log
+        console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '))
+        try { new Function(terminalCode)() } finally { console.log = original }
+        setOutput(prev => [...prev, ...(lines.length ? lines : ['Process exited successfully.'])])
+      }
+    } catch (error) {
+      setOutput(prev => [...prev, `Error: ${error instanceof Error ? error.message : String(error)}`])
+    } finally { setRunning(false) }
+  }
+
+  return <div className={`terminal-panel ${terminalOpen ? 'open' : ''}`}>
+    <div className="terminal-head">
+      <button className="terminal-launch" onClick={() => setTerminalOpen(v => !v)}><Terminal/>{terminalOpen ? 'Hide terminal' : 'Open terminal'}</button>
+      {terminalOpen && <div className="terminal-head-actions"><select value={terminalLanguage} onChange={e => setTerminalLanguage(e.target.value as 'python' | 'javascript')}><option value="python">Python</option><option value="javascript">JavaScript</option></select><button onClick={() => setOutput([])} title="Clear output"><Trash2/></button><button className="primary" disabled={running} onClick={run}><Play/>{running ? 'Running…' : 'Run code'}</button></div>}
+    </div>
+    {terminalOpen && <div className="terminal-body"><div className="terminal-editor"><textarea spellCheck={false} value={terminalCode} onChange={e => setTerminalCode(e.target.value)} aria-label="Terminal code" /></div><pre className="terminal-output" aria-live="polite">{output.length ? output.join('\n') : 'Ready. Run Python or JavaScript here.\nPython runs locally in your browser.'}</pre></div>}
+  </div>
+}
+
 export default function CanvasPage() {
   const [language, setLanguage] = useState<Language>('typescript')
   const [code, setCode] = useState(templates.typescript)
@@ -51,8 +102,9 @@ export default function CanvasPage() {
   const copy = async () => { await navigator.clipboard?.writeText(code); setSaved(true); setTimeout(() => setSaved(false), 1200) }
   const download = () => { const blob = new Blob([code], { type: 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `clue-canvas.${language === 'typescript' ? 'ts' : language === 'javascript' ? 'js' : language === 'python' ? 'py' : language}`; a.click(); URL.revokeObjectURL(url) }
   return <main className="canvas-page">
-    <header className="canvas-header"><div><Link href="/" className="canvas-back"><ArrowLeft/>Back to Clue</Link><div className="canvas-title"><Sparkles/><div><strong>Canvas</strong><span>Language-aware workspace</span></div></div></div><div className="canvas-actions"><button onClick={copy}><Copy/>{saved ? 'Copied' : 'Copy'}</button><button onClick={download}><Download/>Export</button><button className="primary" onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 1200) }}><Save/>Save</button></div></header>
+    <header className="canvas-header"><div><Link href="/" className="canvas-back"><ArrowLeft/>Back to Clue</Link><div className="canvas-title"><Sparkles/><div><strong>Canvas</strong><span>Language-aware workspace · available to guests</span></div></div></div><div className="canvas-actions"><button onClick={copy}><Copy/>{saved ? 'Copied' : 'Copy'}</button><button onClick={download}><Download/>Export</button><button className="primary" onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 1200) }}><Save/>Save</button></div></header>
     <section className="canvas-toolbar"><div className="language-tabs">{(Object.keys(templates) as Language[]).map(l => <button key={l} className={language === l ? 'active' : ''} onClick={() => changeLanguage(l)}>{l}</button>)}</div><button className="preview-toggle" onClick={() => setPreview(v => !v)}>{preview ? <X/> : <Play/>}{preview ? 'Close preview' : 'Preview'}</button></section>
-    <section className={`canvas-grid ${preview ? 'with-preview' : ''}`}><div className="editor-shell"><div className="editor-gutter">{code.split('\n').map((_, i) => <span key={i}>{i + 1}</span>)}</div><div className="editor-area"><pre aria-hidden dangerouslySetInnerHTML={{ __html: highlighted + '\n' }} /><textarea spellCheck={false} value={code} onChange={e => { setCode(e.target.value); setSaved(false) }} aria-label="Canvas editor" /></div></div>{preview && <div className="preview-shell"><div className="preview-head"><span>Preview</span><button onClick={() => setPreview(false)}><X/></button></div>{language === 'html' ? <iframe title="HTML preview" sandbox="allow-scripts" srcDoc={code}/> : <div className="preview-placeholder"><Sparkles/><strong>Live workspace preview</strong><p>Preview is optimized for HTML. Other languages stay safely in the editor for execution through Clue's tool runtime.</p></div>}</div>}</section>
+    <section className={`canvas-grid ${preview ? 'with-preview' : ''}`}><div className="editor-shell"><div className="editor-gutter">{code.split('\n').map((_, i) => <span key={i}>{i + 1}</span>)}</div><div className="editor-area"><pre aria-hidden dangerouslySetInnerHTML={{ __html: highlighted + '\n' }} /><textarea spellCheck={false} value={code} onChange={e => { setCode(e.target.value); setSaved(false) }} aria-label="Canvas editor" /></div></div>{preview && <div className="preview-shell"><div className="preview-head"><span>Preview</span><button onClick={() => setPreview(false)}><X/></button></div>{language === 'html' ? <iframe title="HTML preview" sandbox="allow-scripts" srcDoc={code}/> : <div className="preview-placeholder"><Sparkles/><strong>Live workspace preview</strong><p>Use the terminal below to actually run Python or JavaScript. HTML can still be previewed safely here.</p></div>}</div>}</section>
+    <GuestTerminal code={language === 'python' || language === 'javascript' ? code : templates.python} />
   </main>
 }
