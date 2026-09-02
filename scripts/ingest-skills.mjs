@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const root = process.cwd()
@@ -31,21 +31,15 @@ async function main() {
   let imported = 0
   for (const source of config.sources || []) {
     for (const filePath of source.paths || []) {
-      if (!/\.(skill|md)$/i.test(filePath) || !/(^|\/)SKILL\.md$|\.skill$/i.test(filePath)) continue
+      if (!/(^|\/)SKILL\.md$|\.skill$/i.test(filePath)) continue
       try {
         const content = await fetchGitHubFile(source.repository, filePath)
         const meta = parseFrontmatter(content)
         const id = slug(`${source.repository.replace('/', '-')}-${meta.name || path.basename(path.dirname(filePath))}`)
         const targetDir = path.join(outputRoot, slug(source.repository))
         await mkdir(targetDir, { recursive: true })
-        await writeFile(path.join(targetDir, `${id}.json`), JSON.stringify({
-          id,
-          name: meta.name || path.basename(path.dirname(filePath)),
-          description: meta.description || 'Imported external skill',
-          source: { kind: 'github', repository: source.repository, path: filePath },
-          importedAt: new Date().toISOString(),
-          content
-        }, null, 2) + '\n')
+        const header = `<!-- Clue ingestion metadata: ${source.repository}/${filePath}; imported ${new Date().toISOString()} -->\n`
+        await writeFile(path.join(targetDir, `${id}.md`), header + content)
         imported++
         console.log(`Imported ${source.repository}/${filePath}`)
       } catch (error) {
