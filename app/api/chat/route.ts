@@ -4,7 +4,7 @@ import { getProvider, type ChatMessage } from '@/lib/clue/providers'
 import { getCurrentUser } from '@/lib/auth'
 import { db } from '@/db'
 import { conversations, generatedFiles, memories, userProfiles } from '@/db/schema'
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 import { CONVERSATION_SKILLS_PROMPT } from '@/lib/clue/conversation-skills'
 import { ADVANCED_SKILLS_PROMPT } from '@/lib/clue/advanced-skills'
 import { detectFileIntent, executeFileIntent } from '@/lib/files/intent'
@@ -73,7 +73,7 @@ ${ADVANCED_SKILLS_PROMPT}
 
 STYLE
 - Sound natural, intelligent, calm, confident, and human.
-- Avoid filler, repetitive conclusions, fake enthusiasm, excessive headings, and corporate jargon.`
+- Avoid filler, repetitive conclusions, fake enthusiasm, and corporate jargon.`
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -117,8 +117,28 @@ export async function POST(request: Request) {
       const [conversation] = requestedConversationId
         ? await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, requestedConversationId)).limit(1)
         : await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.userId, user.id)).orderBy(desc(conversations.updatedAt)).limit(1)
-      if (conversation) await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: Buffer.from(file.bytes, 'base64'), contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request, skillId: skillPlan?.skillId || null } })
-      return NextResponse.json({ type: 'file', text: file.text, skill: skillPlan?.skillId || null, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
+
+      let fileId: string | undefined
+      try {
+        const [stored] = conversation ? await db.insert(generatedFiles).values({
+          userId: user.id,
+          conversationId: conversation.id,
+          name: file.name,
+          mimeType: file.type,
+          size: file.size,
+          // Neon HTTP is reliable with an explicit PostgreSQL bytea decode expression.
+          // This avoids passing a Node Buffer as an HTTP query parameter.
+          data: sql`decode(${file.bytes}, 'base64')`,
+          contentText: file.contentText,
+          metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request, skillId: skillPlan?.skillId || null },
+        }).returning({ id: generatedFiles.id }) : []
+        fileId = stored?.id
+      } catch (storageError) {
+        // File delivery must not be lost just because workspace persistence fails.
+        console.error('Generated file persistence error:', storageError)
+      }
+
+      return NextResponse.json({ type: 'file', text: file.text, fileId: fileId || null, skill: skillPlan?.skillId || null, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
     }
 
     const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}${dynamicSkillContext ? `\n\n${dynamicSkillContext}` : ''}` }
