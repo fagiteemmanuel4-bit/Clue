@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "sources": [
+    {"kind":"github","repository":"addyosmani/agent-skills","paths":["skills/code-review-and-quality/SKILL.md","skills/using-agent-skills/SKILL.md","skills/source-driven-development/SKILL.md"]},
+    {"kind":"github","repository":"Shubhamsaboo/awesome-llm-apps","paths":["agent_skills/self-improving-agent-skills/README.md"]},
+    {"kind":"github","repository":"VoltAgent/awesome-openclaw-skills","paths":["README.md","categories/ai-and-llms.md","categories/search-and-research.md","categories/git-and-github.md"]},
+    {"kind":"github","repository":"aloth/awesome-ai-agents","paths":["README.md"]},
+    {"kind":"github","repository":"ashishpatel26/500-AI-Agents-Projects","paths":["README.md","CONTRIBUTION.md"]}
+  ]
+}
