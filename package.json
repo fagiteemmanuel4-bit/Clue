@@ -1,6 +1,6 @@
 {
   "name":"clue","version":"0.3.0","private":true,
-  "scripts":{"dev":"next dev","build":"node scripts/fix-build-source.js && node scripts/ensure-production-schema.js && next build","start":"next start","lint":"eslint .","typecheck":"tsc --noEmit","skills:ingest":"node scripts/ingest-skills.mjs","skills:test":"node scripts/test-skills.mjs","db:generate":"drizzle-kit generate","db:migrate":"tsx scripts/migrate.ts","db:push":"drizzle-kit push"},
+  "scripts":{"dev":"next dev","build":"node scripts/fix-build-source.js && node scripts/ingest-skills.mjs && node scripts/ensure-production-schema.js && next build","start":"next start","lint":"eslint .","typecheck":"tsc --noEmit","skills:ingest":"node scripts/ingest-skills.mjs","skills:test":"node scripts/test-skills.mjs","db:generate":"drizzle-kit generate","db:migrate":"tsx scripts/migrate.ts","db:push":"drizzle-kit push"},
   "dependencies":{"@neondatabase/serverless":"^1.0.1","archiver":"^7.0.1","bcryptjs":"^3.0.2","docx":"^9.5.1","drizzle-orm":"^0.44.5","exceljs":"^4.4.0","jszip":"^3.10.1","lucide-react":"^0.468.0","next":"16.3.1","pdf-lib":"^1.17.1","pdf-parse":"^1.1.1","pptxgenjs":"^4.0.1","react":"19.2.0","react-dom":"19.2.0","zod":"^4.0.5"},
   "devDependencies":{"@types/archiver":"^7.0.0","@types/node":"^20","@types/react":"^19","@types/react-dom":"^19","drizzle-kit":"^0.31.4","eslint":"^9","typescript":"^5"}
 }
