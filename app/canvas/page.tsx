@@ -21,7 +21,7 @@ const templates: Record<Language, string> = {
 function escapeHtml(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 function highlight(code: string, language: Language) {
   const stash: string[] = []
-  const mark = (html: string) => { const id = stash.push(html) - 1; return `\u0001${id}\u0002` }
+  const mark = (html: string) => { const id = stash.push(html) - 1; return `\u0001${String.fromCharCode(0xe000 + id)}\u0002` }
   let source = escapeHtml(code)
   if (language === 'html') {
     source = source.replace(/(&lt;\/?)([\w-]+)/g, (_, open, tag) => `${open}${mark(`<span class="tok-keyword">${tag}</span>`)}`)
@@ -38,7 +38,7 @@ function highlight(code: string, language: Language) {
     source = source.replace(/\b\d+(?:\.\d+)?\b/g, match => mark(`<span class="tok-number">${match}</span>`))
     if (language === 'css') source = source.replace(/([\w-]+)(?=\s*:)/g, match => mark(`<span class="tok-property">${match}</span>`))
   }
-  return source.replace(/\u0001(\d+)\u0002/g, (_, id) => stash[Number(id)])
+  return source.replace(/\u0001([\ue000-\uf8ff])\u0002/g, (_, token) => stash[token.charCodeAt(0) - 0xe000])
 }
 
 export default function CanvasPage() {
