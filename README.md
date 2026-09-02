@@ -29,3 +29,5 @@ The repository is connected to Vercel. Production deployments are created from `
 <!-- Release trigger: production verification -->
 
 <!-- Production verification checkpoint -->
+
+<!-- Skill architecture production verification -->
