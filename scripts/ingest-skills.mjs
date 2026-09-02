@@ -18,6 +18,17 @@ function parseFrontmatter(text) {
   }))
 }
 
+function riskFlags(text) {
+  const rules = [
+    [/rm\s+-rf\s+\//i, 'destructive filesystem command'],
+    [/(curl|wget)[^\n|]*\|\s*(sh|bash)/i, 'remote shell piping'],
+    [/-----BEGIN (RSA|OPENSSH|EC|PRIVATE) KEY-----/i, 'embedded private key'],
+    [/(export|set)\s+[A-Z_]*(API_KEY|TOKEN|PASSWORD|SECRET)/i, 'credential manipulation'],
+    [/chmod\s+\+x[^\n]*\b(curl|wget)/i, 'downloaded executable activation'],
+  ]
+  return rules.filter(([pattern]) => pattern.test(text)).map(([, label]) => label)
+}
+
 async function fetchGitHubFile(repo, filePath) {
   const url = `https://raw.githubusercontent.com/${repo}/HEAD/${filePath}`
   const response = await fetch(url, { headers: { 'User-Agent': 'Clue-Skill-Ingestor/1.0' } })
@@ -29,11 +40,18 @@ async function main() {
   const config = JSON.parse(await readFile(sourceFile, 'utf8'))
   await mkdir(outputRoot, { recursive: true })
   let imported = 0
+  let blocked = 0
   for (const source of config.sources || []) {
     for (const filePath of source.paths || []) {
       if (!/(^|\/)SKILL\.md$|\.skill$/i.test(filePath)) continue
       try {
         const content = await fetchGitHubFile(source.repository, filePath)
+        const flags = riskFlags(content)
+        if (flags.length) {
+          blocked++
+          console.warn(`BLOCKED ${source.repository}/${filePath}: ${flags.join(', ')}`)
+          continue
+        }
         const meta = parseFrontmatter(content)
         const id = slug(`${source.repository.replace('/', '-')}-${meta.name || path.basename(path.dirname(filePath))}`)
         const targetDir = path.join(outputRoot, slug(source.repository))
@@ -47,7 +65,7 @@ async function main() {
       }
     }
   }
-  console.log(`Skill ingestion complete: ${imported} skill file(s) imported.`)
+  console.log(`Skill ingestion complete: ${imported} imported, ${blocked} blocked.`)
 }
 
 main().catch(error => { console.error(error); process.exit(1) })
