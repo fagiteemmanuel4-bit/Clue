@@ -9,16 +9,23 @@ async function walk(dir) {
   for (const entry of entries) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) files.push(...await walk(full))
-    else if (/\.(md|skill)$/i.test(entry.name) && entry.name.toLowerCase() !== 'sources.json') files.push(full)
+    else if (/\.(md|skill|json)$/i.test(entry.name) && entry.name.toLowerCase() !== 'sources.json') files.push(full)
   }
   return files
 }
 
-function frontmatter(text) {
+function validMarkdown(text) {
   const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
-  if (!match) return null
+  if (!match) return false
   const fields = new Set(match[1].split('\n').map(line => line.split(':')[0]?.trim()).filter(Boolean))
   return fields.has('name') && fields.has('description')
+}
+
+function validJson(text) {
+  try {
+    const value = JSON.parse(text)
+    return Boolean(value && (value.name || value.id) && (value.description || value.instructions || value.steps || value.content))
+  } catch { return false }
 }
 
 const files = await walk(root)
@@ -27,7 +34,8 @@ let failures = 0
 for (const file of files) {
   const text = await readFile(file, 'utf8')
   if (!text.trim()) { console.error(`EMPTY ${file}`); failures++; continue }
-  if (!frontmatter(text)) { console.error(`INVALID_FRONTMATTER ${file}`); failures++; continue }
+  const valid = /\.json$/i.test(file) ? validJson(text) : validMarkdown(text) || /\.skill$/i.test(file) && validJson(text)
+  if (!valid) { console.error(`INVALID_SKILL ${file}`); failures++; continue }
   console.log(`OK ${path.relative(process.cwd(), file)}`)
 }
 if (failures) process.exit(1)
