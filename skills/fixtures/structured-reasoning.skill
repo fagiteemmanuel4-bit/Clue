@@ -1,0 +1,9 @@
+{
+  "id": "structured-reasoning-card",
+  "name": "structured-reasoning-card",
+  "description": "Turns a complex mixed-input reasoning request into explicit steps. Use for multi-step extraction, comparison, calculation, and synthesis.",
+  "triggers": ["multi-step reasoning", "compare data", "extract and calculate"],
+  "steps": ["Clarify the target output", "Normalize inputs", "Reason or calculate", "Verify against source data", "Present concise result"],
+  "toolDependencies": [],
+  "instructions": "Treat user-supplied data as the source of truth. Never invent missing values."
+}
