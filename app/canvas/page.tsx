@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Copy, Download, Play, Plus, Save, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Play, Save, Sparkles, X } from 'lucide-react'
 import './canvas.css'
 
 type Language = 'javascript' | 'typescript' | 'python' | 'json' | 'html' | 'css' | 'sql' | 'markdown'
@@ -13,20 +13,32 @@ const templates: Record<Language, string> = {
   python: `def greet(name: str) -> str:\n    return f"Hello, {name}!"\n\nprint(greet("Clue"))`,
   json: `{"name":"Clue","active":true,"features":["AI","Canvas"]}`,
   html: `<main>\n  <h1>Hello, Clue</h1>\n  <p>Edit this canvas and preview HTML.</p>\n</main>`,
-  css: `.card {\n  display: grid;\n  gap: 12px;\n  border-radius: 16px;\n}`, 
+  css: `.card {\n  display: grid;\n  gap: 12px;\n  border-radius: 16px;\n}`,
   sql: `SELECT name, COUNT(*) AS total\nFROM users\nGROUP BY name\nORDER BY total DESC;`,
   markdown: `# Clue Canvas\n\nWrite ideas, notes, code, or documentation here.\n\n- Fast editing\n- Language aware\n- Exportable`,
 }
 
 function escapeHtml(s: string) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 function highlight(code: string, language: Language) {
-  const escaped = escapeHtml(code)
-  if (language === 'json') return escaped.replace(/(&quot;[^&]*?&quot;)(\s*:)?/g, '<span class="tok-string">$1</span>$2').replace(/\b(true|false|null)\b/g, '<span class="tok-keyword">$1</span>').replace(/\b\d+(?:\.\d+)?\b/g, '<span class="tok-number">$&</span>')
-  if (language === 'html') return escaped.replace(/(&lt;\/?)([\w-]+)/g, '$1<span class="tok-keyword">$2</span>').replace(/([\w-]+)=(&quot;.*?&quot;)/g, '<span class="tok-property">$1</span>=$2')
-  if (language === 'css') return escaped.replace(/([\w-]+)(?=\s*:)/g, '<span class="tok-property">$1</span>').replace(/(\.[\w-]+|#[\w-]+)/g, '<span class="tok-keyword">$1</span>')
-  if (language === 'sql') return escaped.replace(/\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|AS|JOIN|ON|COUNT|DESC|ASC)\b/gi, '<span class="tok-keyword">$1</span>').replace(/('[^']*')/g, '<span class="tok-string">$1</span>')
-  if (language === 'markdown') return escaped.replace(/^(#{1,6}.*)$/gm, '<span class="tok-heading">$1</span>').replace(/^(\s*[-*]\s.*)$/gm, '<span class="tok-comment">$1</span>')
-  return escaped.replace(/(\/\/.*)$/gm, '<span class="tok-comment">$1</span>').replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '<span class="tok-string">$&</span>').replace(/\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|def|print|in|True|False|None|type|interface)\b/g, '<span class="tok-keyword">$1</span>').replace(/\b\d+(?:\.\d+)?\b/g, '<span class="tok-number">$&</span>')
+  const stash: string[] = []
+  const mark = (html: string) => { const id = stash.push(html) - 1; return `\u0001${id}\u0002` }
+  let source = escapeHtml(code)
+  if (language === 'html') {
+    source = source.replace(/(&lt;\/?)([\w-]+)/g, (_, open, tag) => `${open}${mark(`<span class="tok-keyword">${tag}</span>`)}`)
+    source = source.replace(/([\w-]+)=(&quot;.*?&quot;|&quot;[^&]*&quot;)/g, (_, key, value) => `${mark(`<span class="tok-property">${key}</span>`)}=${value}`)
+  } else {
+    source = source.replace(/(\/\/.*)$/gm, match => mark(`<span class="tok-comment">${match}</span>`))
+    source = source.replace(/(&quot;[^&]*?&quot;|'[^']*'|`[^`]*`)/g, match => mark(`<span class="tok-string">${match}</span>`))
+    if (language === 'sql') source = source.replace(/\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|AS|JOIN|ON|COUNT|DESC|ASC)\b/gi, match => mark(`<span class="tok-keyword">${match}</span>`))
+    else if (language === 'markdown') {
+      source = source.replace(/^(#{1,6}.*)$/gm, match => mark(`<span class="tok-heading">${match}</span>`))
+      source = source.replace(/^(\s*[-*]\s.*)$/gm, match => mark(`<span class="tok-comment">${match}</span>`))
+    } else source = source.replace(/\b(const|let|var|function|return|if|else|for|while|class|new|import|from|export|def|print|in|True|False|None|type|interface)\b/g, match => mark(`<span class="tok-keyword">${match}</span>`))
+    source = source.replace(/\b(true|false|null)\b/g, match => mark(`<span class="tok-keyword">${match}</span>`))
+    source = source.replace(/\b\d+(?:\.\d+)?\b/g, match => mark(`<span class="tok-number">${match}</span>`))
+    if (language === 'css') source = source.replace(/([\w-]+)(?=\s*:)/g, match => mark(`<span class="tok-property">${match}</span>`))
+  }
+  return source.replace(/\u0001(\d+)\u0002/g, (_, id) => stash[Number(id)])
 }
 
 export default function CanvasPage() {
