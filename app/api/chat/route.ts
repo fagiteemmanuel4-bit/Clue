@@ -8,6 +8,8 @@ import { desc, eq } from 'drizzle-orm'
 import { CONVERSATION_SKILLS_PROMPT } from '@/lib/clue/conversation-skills'
 import { ADVANCED_SKILLS_PROMPT } from '@/lib/clue/advanced-skills'
 import { detectFileIntent, executeFileIntent } from '@/lib/files/intent'
+import { routeSkill } from '@/lib/clue/skills/router'
+import { buildSkillExecutionPlan, skillPrompt } from '@/lib/clue/skills/executor'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -103,6 +105,10 @@ export async function POST(request: Request) {
     const remaining = parsed.data.guestRemaining
     if (!user && remaining !== undefined && remaining <= 3 && remaining > 0) context.push(`GUEST LIMIT NOTICE\nThis guest has approximately ${remaining} message${remaining === 1 ? '' : 's'} remaining before the 20-message guest allowance. Briefly mention this near the end of your response. Do not make it the focus.`)
 
+    const routedSkill = await withTimeout(routeSkill(latestUserPrompt), 350)
+    const skillPlan = routedSkill ? buildSkillExecutionPlan(routedSkill) : null
+    const dynamicSkillContext = skillPlan ? skillPrompt(skillPlan) : ''
+
     const fileIntent = detectFileIntent(latestUserPrompt)
     if (fileIntent) {
       if (!user) return NextResponse.json({ error: 'Sign in to create downloadable files.' }, { status: 401 })
@@ -111,15 +117,15 @@ export async function POST(request: Request) {
       const [conversation] = requestedConversationId
         ? await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, requestedConversationId)).limit(1)
         : await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.userId, user.id)).orderBy(desc(conversations.updatedAt)).limit(1)
-      if (conversation) await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: Buffer.from(file.bytes, 'base64'), contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request } })
-      return NextResponse.json({ type: 'file', text: file.text, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store' } })
+      if (conversation) await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: Buffer.from(file.bytes, 'base64'), contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request, skillId: skillPlan?.skillId || null } })
+      return NextResponse.json({ type: 'file', text: file.text, skill: skillPlan?.skillId || null, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
     }
 
-    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}` }
+    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}${dynamicSkillContext ? `\n\n${dynamicSkillContext}` : ''}` }
     const provider = getProvider(parsed.data.model)
     if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
     const stream = await provider.stream([system, ...incoming], request.signal)
-    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive' } })
+    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') return new Response(null, { status: 499 })
     console.error('Chat route error:', error)
