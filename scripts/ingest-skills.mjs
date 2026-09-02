@@ -18,6 +18,10 @@ function parseFrontmatter(text) {
   }))
 }
 
+function parseJsonMeta(text) {
+  try { return JSON.parse(text) } catch { return {} }
+}
+
 function riskFlags(text) {
   const rules = [
     [/rm\s+-rf\s+\//i, 'destructive filesystem command'],
@@ -43,7 +47,7 @@ async function main() {
   let blocked = 0
   for (const source of config.sources || []) {
     for (const filePath of source.paths || []) {
-      if (!/(^|\/)SKILL\.md$|\.skill$/i.test(filePath)) continue
+      if (!/(^|\/)SKILL\.md$|\.skill$|\.skill\.json$|\/skills?\/[^/]+\.json$/i.test(filePath)) continue
       try {
         const content = await fetchGitHubFile(source.repository, filePath)
         const flags = riskFlags(content)
@@ -52,12 +56,13 @@ async function main() {
           console.warn(`BLOCKED ${source.repository}/${filePath}: ${flags.join(', ')}`)
           continue
         }
-        const meta = parseFrontmatter(content)
-        const id = slug(`${source.repository.replace('/', '-')}-${meta.name || path.basename(path.dirname(filePath))}`)
+        const meta = /\.json$/i.test(filePath) ? parseJsonMeta(content) : parseFrontmatter(content)
+        const id = slug(`${source.repository.replace('/', '-')}-${meta.name || meta.id || path.basename(path.dirname(filePath))}`)
         const targetDir = path.join(outputRoot, slug(source.repository))
         await mkdir(targetDir, { recursive: true })
-        const header = `<!-- Clue ingestion metadata: ${source.repository}/${filePath}; imported ${new Date().toISOString()} -->\n`
-        await writeFile(path.join(targetDir, `${id}.md`), header + content)
+        const extension = /\.json$/i.test(filePath) ? '.json' : '.md'
+        const payload = extension === '.md' ? `<!-- Clue ingestion metadata: ${source.repository}/${filePath}; imported ${new Date().toISOString()} -->\n${content}` : content
+        await writeFile(path.join(targetDir, `${id}${extension}`), payload)
         imported++
         console.log(`Imported ${source.repository}/${filePath}`)
       } catch (error) {
