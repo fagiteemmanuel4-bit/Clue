@@ -10,9 +10,10 @@ import FileWorkspaceDock from './components/file-workspace-dock'
 import WorkspaceLauncher from './components/workspace-launcher'
 import SourceCardsBridge from './components/source-cards-bridge'
 import VoiceConfirmation from './components/voice-confirmation'
+import CanvasAutosave from './components/canvas-autosave'
 
 export const metadata: Metadata = { title: 'Clue', description: 'A calm, powerful AI workspace.' }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}<FileWorkspaceDock/><WorkspaceLauncher/><SourceCardsBridge/><VoiceConfirmation/></body></html>
+  return <html lang="en"><body>{children}<FileWorkspaceDock/><WorkspaceLauncher/><SourceCardsBridge/><VoiceConfirmation/><CanvasAutosave/></body></html>
 }
