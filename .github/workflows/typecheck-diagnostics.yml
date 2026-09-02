@@ -1,0 +1,32 @@
+name: Temporary TypeScript Diagnostics
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Capture typecheck diagnostics
+        run: |
+          mkdir -p docs
+          npm install > /tmp/npm-install.log 2>&1 || true
+          npm run typecheck > docs/typecheck-errors.txt 2>&1 || true
+          printf '\nCaptured at %s\n' "$(date -u +%FT%TZ)" >> docs/typecheck-errors.txt
+      - name: Commit diagnostics when they change
+        run: |
+          if git diff --quiet -- docs/typecheck-errors.txt; then exit 0; fi
+          git config user.name 'clue-diagnostics-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/typecheck-errors.txt
+          git commit -m 'chore(ci): capture typecheck diagnostics [skip ci]'
+          git push
