@@ -4,11 +4,10 @@ import './clue-overrides.css'
 import './clue-live.css'
 import './history-menu-fix.css'
 import './clue-ui-polish.css'
-import SourceCardsBridge from './components/source-cards-bridge'
 import CanvasAutosave from './components/canvas-autosave'
 
 export const metadata: Metadata = { title: 'Clue', description: 'A calm, powerful AI workspace.' }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}<SourceCardsBridge/><CanvasAutosave/></body></html>
+  return <html lang="en"><body>{children}<CanvasAutosave/></body></html>
 }
