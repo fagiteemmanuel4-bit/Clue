@@ -12,6 +12,7 @@ html{background:var(--bg)}body{background:var(--bg);-webkit-font-smoothing:antia
 .page-content{margin-top:7vh}.page-search,.project-card,.empty-state,.archive-row{background:var(--surface);box-shadow:var(--shadow)}.project-card{transition:transform .16s var(--ease),box-shadow .16s ease}.project-card:hover{transform:translateY(-1px);box-shadow:var(--shadow2)}
 .page-search{border:1px solid color-mix(in srgb,var(--text) 6%,transparent)}
 .settings-group{background:var(--surface);box-shadow:var(--shadow)}.settings-row{border-top-color:color-mix(in srgb,var(--text) 7%,transparent)}.settings-note{background:var(--surface3);border-color:color-mix(in srgb,var(--text) 7%,transparent)}
+.canvas-page{background:var(--bg)!important}.canvas-header,.canvas-toolbar,.canvas-meta,.canvas-grid,.terminal-panel{max-width:1400px}.canvas-actions button,.preview-toggle{background:var(--surface);border-color:color-mix(in srgb,var(--text) 8%,transparent);box-shadow:var(--shadow)}.language-tabs{background:var(--surface2)}.language-tabs button.active{background:var(--surface3);box-shadow:var(--shadow)}.preview-shell{background:var(--surface3);box-shadow:var(--shadow2)}
 @media(max-width:700px){.messages{gap:20px}.page-content{margin-top:5vh}}
 :focus-visible{outline:2px solid var(--text);outline-offset:2px}
 button,a,input,textarea{transition-duration:.16s}
