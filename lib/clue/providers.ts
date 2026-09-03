@@ -1,5 +1,8 @@
+import { shouldUseWeb } from './intent'
+
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
-export type AIProvider = { id: string; label: string; stream: (messages: ChatMessage[], signal?: AbortSignal) => Promise<ReadableStream<Uint8Array>>; complete: (messages: ChatMessage[], signal?: AbortSignal) => Promise<string> }
+export type ProviderOptions = { web?: boolean; maxTokens?: number }
+export type AIProvider = { id: string; label: string; stream: (messages: ChatMessage[], signal?: AbortSignal, options?: ProviderOptions) => Promise<ReadableStream<Uint8Array>>; complete: (messages: ChatMessage[], signal?: AbortSignal, options?: ProviderOptions) => Promise<string> }
 
 const encoder = new TextEncoder()
 const configured = (...names: string[]) => { for (const name of names) { const value = process.env[name]?.trim(); if (value) return value } return '' }
@@ -11,19 +14,13 @@ function combinedSignal(signal: AbortSignal | undefined, controller: AbortContro
   return signal ? AbortSignal.any([signal, controller.signal, timeout]) : AbortSignal.any([controller.signal, timeout])
 }
 
-function wantsWebSearch(messages: ChatMessage[]) {
-  const prompt = [...messages].reverse().find(message => message.role === 'user')?.content.toLowerCase() || ''
-  return /\b(search|look up|lookup|browse|web|internet|online|latest|today|yesterday|current|recent|news|price|prices|weather|who is|what happened|according to)\b/.test(prompt)
-}
-
 function webOptions(enabled: boolean) { return enabled ? { tools: [{ type: 'openrouter:web_search' as const }] } : {} }
-
-function uniqueSources(sources: Array<{url:string;title?:string}>) { return sources.filter((x,i,all) => all.findIndex(y => y.url === x.url) === i).slice(0,8) }
+function uniqueSources(sources: Array<{url:string;title?:string}>) { return sources.filter((x,i,all) => all.findIndex(y => y.url === x.url) === i).slice(0,12) }
 function sourceMarker(sources: Array<{url:string;title?:string}>) { return sources.length ? `\n\n[[CLUE_SOURCES_JSON]]${JSON.stringify(sources)}[[/CLUE_SOURCES_JSON]]` : '' }
 
-async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, maxTokens = 900) {
-  const controller = new AbortController(); const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai'); const useWeb = isOpenRouter && wantsWebSearch(messages)
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: false, ...webOptions(useWeb) }) })
+async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, options: ProviderOptions = {}) {
+  const controller = new AbortController(); const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai'); const useWeb = isOpenRouter && (options.web ?? shouldUseWeb(messages.map(m => m.role === 'user' ? m.content : '').join('\n')))
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: options.maxTokens || 900, stream: false, ...webOptions(useWeb) }) })
   if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`) }
   const json = await response.json() as { choices?: Array<{ message?: { content?: string; annotations?: Array<{type?:string;url_citation?:{url?:string;title?:string}}> } }>; model?: string }
   const choice = json.choices?.[0]?.message; let content = choice?.content
@@ -34,9 +31,9 @@ async function requestNonStreaming(baseUrl: string, apiKey: string, model: strin
   return content
 }
 
-async function requestStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, maxTokens = 900) {
-  const controller = new AbortController(); const combined = combinedSignal(signal, controller, STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai'); const useWeb = isOpenRouter && wantsWebSearch(messages)
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, Accept: 'text/event-stream', ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true, ...webOptions(useWeb) }) })
+async function requestStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, options: ProviderOptions = {}) {
+  const controller = new AbortController(); const combined = combinedSignal(signal, controller, STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai'); const useWeb = isOpenRouter && (options.web ?? shouldUseWeb(messages.map(m => m.role === 'user' ? m.content : '').join('\n')))
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, Accept: 'text/event-stream', ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: options.maxTokens || 900, stream: true, ...webOptions(useWeb) }) })
   if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`) }
   if (!response.body) throw new Error('AI provider returned no streaming body.')
   const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = ''; let sources:Array<{url:string;title?:string}> = []; let closed = false
@@ -70,8 +67,8 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
 function openAICompatible(id:string,label:string,baseUrl:string,apiKey:string,model:string,fallbackModels:string[]=[]):AIProvider{
   const candidates=()=>[model,...fallbackModels].filter((item,index,all)=>item&&all.indexOf(item)===index).slice(0,3)
   return {id,label,
-    async stream(messages,signal){let lastError:unknown=null;for(const candidate of candidates()){try{return await requestStreaming(baseUrl,apiKey,candidate,messages,signal)}catch(error){lastError=error;if(signal?.aborted)throw error;console.warn(`[Clue AI] ${candidate} streaming failed; trying next model.`)}}throw lastError instanceof Error?lastError:new Error('AI provider did not respond.')},
-    async complete(messages,signal){let lastError:unknown=null;for(const candidate of candidates()){try{return await requestNonStreaming(baseUrl,apiKey,candidate,messages,signal,900)}catch(error){lastError=error;if(signal?.aborted)throw error;console.warn(`[Clue AI] ${candidate} failed for completion; trying next model.`)}}throw lastError instanceof Error?lastError:new Error('AI provider did not respond.')},
+    async stream(messages,signal,options){let lastError:unknown=null;for(const candidate of candidates()){try{return await requestStreaming(baseUrl,apiKey,candidate,messages,signal,options)}catch(error){lastError=error;if(signal?.aborted)throw error;console.warn(`[Clue AI] ${candidate} streaming failed; trying next model.`)}}throw lastError instanceof Error?lastError:new Error('AI provider did not respond.')},
+    async complete(messages,signal,options){let lastError:unknown=null;for(const candidate of candidates()){try{return await requestNonStreaming(baseUrl,apiKey,candidate,messages,signal,options)}catch(error){lastError=error;if(signal?.aborted)throw error;console.warn(`[Clue AI] ${candidate} failed for completion; trying next model.`)}}throw lastError instanceof Error?lastError:new Error('AI provider did not respond.')},
   }
 }
 
