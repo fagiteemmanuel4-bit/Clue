@@ -11,9 +11,18 @@ function combinedSignal(signal: AbortSignal | undefined, controller: AbortContro
   return signal ? AbortSignal.any([signal, controller.signal, timeout]) : AbortSignal.any([controller.signal, timeout])
 }
 
+function wantsWebSearch(messages: ChatMessage[]) {
+  const prompt = [...messages].reverse().find(message => message.role === 'user')?.content.toLowerCase() || ''
+  return /\b(search|look up|lookup|browse|web|internet|online|latest|today|yesterday|current|recent|news|price|prices|weather|who is|what happened|according to)\b/.test(prompt)
+}
+
+function webOptions(enabled: boolean) {
+  return enabled ? { tools: [{ type: 'openrouter:web_search' as const }] } : {}
+}
+
 async function requestNonStreaming(baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], signal?: AbortSignal, maxTokens = 900) {
-  const controller = new AbortController(); const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai')
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: false, ...(isOpenRouter ? { tools: [{ type: 'openrouter:web_search', parameters: { engine: 'auto', max_results: 5 } }] } : {}) }) })
+  const controller = new AbortController(); const combined = combinedSignal(signal, controller, NON_STREAM_TIMEOUT); const isOpenRouter = baseUrl.includes('openrouter.ai'); const useWeb = isOpenRouter && wantsWebSearch(messages)
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, { method: 'POST', signal: combined, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) }, body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: false, ...webOptions(useWeb) }) })
   if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`) }
   const json = await response.json() as { choices?: Array<{ message?: { content?: string; annotations?: Array<{type?:string;url_citation?:{url?:string;title?:string}}> } }>; model?: string }
   const choice = json.choices?.[0]?.message; let content = choice?.content
@@ -28,10 +37,11 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
   const controller = new AbortController()
   const combined = combinedSignal(signal, controller, STREAM_TIMEOUT)
   const isOpenRouter = baseUrl.includes('openrouter.ai')
+  const useWeb = isOpenRouter && wantsWebSearch(messages)
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST', signal: combined,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`, Accept: 'text/event-stream', ...(isOpenRouter ? {'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://clue-nmmn.vercel.app','X-Title':'Clue'} : {}) },
-    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true, ...(isOpenRouter ? { tools: [{ type: 'openrouter:web_search', parameters: { engine: 'auto', max_results: 5 } }] } : {}) }),
+    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true, ...webOptions(useWeb) }),
   })
   if (!response.ok) { const detail = await response.text().catch(() => ''); throw new Error(`AI provider request failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ''}`) }
   if (!response.body) throw new Error('AI provider returned no streaming body.')
@@ -40,9 +50,7 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
   const decoder = new TextDecoder()
   let buffer = ''
   let sources: Array<{url:string;title?:string}> = []
-  let sawData = false
   let closed = false
-  const sourceController = new AbortController()
   const output = new ReadableStream<Uint8Array>({
     async pull(outController) {
       try {
@@ -51,8 +59,7 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
           const { done, value } = await reader.read()
           if (done) {
             buffer += decoder.decode()
-            const terminal = buffer.trim()
-            if (terminal) processSSE(terminal)
+            if (buffer.trim()) processSSE(buffer)
             closed = true
             outController.close()
             return
@@ -64,7 +71,7 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
             const doneEvent = processSSE(event)
             if (doneEvent) { closed = true; outController.close(); await reader.cancel(); return }
             const delta = extractDelta(event)
-            if (delta) { sawData = true; outController.enqueue(encoder.encode(delta)); return }
+            if (delta) { outController.enqueue(encoder.encode(delta)); return }
           }
         }
       } catch (error) {
@@ -73,7 +80,7 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
         outController.error(error)
       }
     },
-    cancel() { closed = true; sourceController.abort(); return reader.cancel() },
+    cancel() { closed = true; return reader.cancel() },
   })
 
   function extractDelta(event: string) {
@@ -96,21 +103,16 @@ async function requestStreaming(baseUrl: string, apiKey: string, model: string, 
     for (const data of dataLines) {
       if (data === '[DONE]') {
         const unique = sources.filter((x,i,all) => all.findIndex(y => y.url === x.url) === i).slice(0,8)
-        if (unique.length) { const text = `\n\n[[CLUE_SOURCES]]\n${unique.map(s => `- [${s.title || new URL(s.url).hostname}](${s.url})`).join('\n')}\n[[/CLUE_SOURCES]]`; if (text.trim()) { try { outputControllerEnqueue(text) } catch {} } }
+        if (unique.length) console.info(`[Clue AI] web search returned ${unique.length} source annotations`)
         return true
       }
     }
     return false
   }
 
-  // Kept only to allow source metadata to be appended at stream termination without buffering tokens.
-  function outputControllerEnqueue(text: string) { void text }
-
   if (signal) signal.addEventListener('abort', () => { closed = true; controller.abort(); void reader.cancel() }, { once: true })
   return output
 }
-
-function likelyTruncated(text: string) { const t = text.trim(); if (!t || t.length < 6500) return false; if (/```[\s\S]*```\s*$/.test(t)) return false; return !/[.!?。！？)\]}>`]$/.test(t) }
 
 function openAICompatible(id: string, label: string, baseUrl: string, apiKey: string, model: string, fallbackModels: string[] = []): AIProvider {
   const candidates = () => [model, ...fallbackModels].filter((item,index,all) => item && all.indexOf(item) === index).slice(0,3)
@@ -118,15 +120,17 @@ function openAICompatible(id: string, label: string, baseUrl: string, apiKey: st
     async stream(messages, signal) {
       let lastError: unknown = null
       for (const candidate of candidates()) {
-        try {
-          return await requestStreaming(baseUrl, apiKey, candidate, messages, signal)
-        } catch (error) { lastError = error; if (signal?.aborted) throw error; console.warn(`[Clue AI] ${candidate} streaming failed; trying next model.`) }
+        try { return await requestStreaming(baseUrl, apiKey, candidate, messages, signal) }
+        catch (error) { lastError = error; if (signal?.aborted) throw error; console.warn(`[Clue AI] ${candidate} streaming failed; trying next model.`) }
       }
       throw lastError instanceof Error ? lastError : new Error('AI provider did not respond.')
     },
     async complete(messages, signal) {
       let lastError: unknown = null
-      for (const candidate of candidates()) { try { return await requestNonStreaming(baseUrl, apiKey, candidate, messages, signal, 900) } catch (error) { lastError = error; if (signal?.aborted) throw error; console.warn(`[Clue AI] ${candidate} failed for completion; trying next model.`) } }
+      for (const candidate of candidates()) {
+        try { return await requestNonStreaming(baseUrl, apiKey, candidate, messages, signal, 900) }
+        catch (error) { lastError = error; if (signal?.aborted) throw error; console.warn(`[Clue AI] ${candidate} failed for completion; trying next model.`) }
+      }
       throw lastError instanceof Error ? lastError : new Error('AI provider did not respond.')
     },
   }
