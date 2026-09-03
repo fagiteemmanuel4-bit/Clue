@@ -1,4 +1,4 @@
-import { pgEnum, pgTable, text, timestamp, uuid, real, index, boolean, jsonb, integer, customType } from 'drizzle-orm/pg-core'
+import { pgEnum, pgTable, text, timestamp, uuid, real, index, boolean, jsonb, integer, customType, uniqueIndex } from 'drizzle-orm/pg-core'
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' })
 
@@ -14,8 +14,8 @@ export const userProfiles = pgTable('user_profiles', {
   name: text('name'), profession: text('profession'), uses: jsonb('uses').$type<string[]>().default([]).notNull(), communicationStyle: text('communication_style'), experienceLevel: text('experience_level'), technologies: text('technologies'), goals: text('goals'), explicitMemory: text('explicit_memory'), memoryEnabled: boolean('memory_enabled').default(true).notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
 export const memories = pgTable('memories', {
-  id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), content: text('content').notNull(), source: text('source').notNull().default('explicit'), importance: real('importance').notNull().default(0.5), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, t => ({ userUpdated: index('memories_user_updated_idx').on(t.userId, t.updatedAt) }))
+  id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), content: text('content').notNull(), contentHash: text('content_hash').notNull(), source: text('source').notNull().default('explicit'), importance: real('importance').notNull().default(0.5), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => ({ userUpdated: index('memories_user_updated_idx').on(t.userId, t.updatedAt), userContentHash: uniqueIndex('memories_user_content_hash_uidx').on(t.userId, t.contentHash) }))
 export const conversations = pgTable('conversations', {
   id: uuid('id').defaultRandom().primaryKey(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), title: text('title').notNull().default('New conversation'), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => ({ userUpdated: index('conversations_user_updated_idx').on(t.userId, t.updatedAt) }))

@@ -10,13 +10,14 @@ import { ADVANCED_SKILLS_PROMPT } from '@/lib/clue/advanced-skills'
 import { detectFileIntent, executeFileIntent } from '@/lib/files/intent'
 import { routeSkill } from '@/lib/clue/skills/router'
 import { buildSkillExecutionPlan, skillPrompt } from '@/lib/clue/skills/executor'
+import { classifyIntent, shouldUseWeb } from '@/lib/clue/intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const messageSchema = z.object({ role: z.enum(['system', 'user', 'assistant']), content: z.string().min(1).max(100_000) })
-const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), conversationId: z.string().uuid().optional(), userContext: z.record(z.string(), z.unknown()).optional(), guestRemaining: z.number().int().min(0).max(20).optional() })
+const bodySchema = z.object({ messages: z.array(messageSchema).min(1).max(100), model: z.string().optional(), conversationId: z.string().uuid().optional(), userContext: z.record(z.string(), z.unknown()).optional(), guestRemaining: z.number().int().min(0).max(20).optional(), web: z.boolean().optional() })
 const CLUE_SYSTEM = `You are Clue, a highly capable general-purpose AI assistant and intelligent workspace partner.
 
 CORE BEHAVIOR
@@ -43,7 +44,7 @@ CONVERSATION
 - If the user clearly wants work performed, produce the work rather than only explaining how.
 
 REASONING & QUALITY
-- Internally consider ambiguity, constraints, tradeoffs, edge cases, and failure modes before answering.
+- Internally consider ambiguity, constraints, edge cases, and failure modes before answering.
 - Do not reveal private chain-of-thought. Give conclusions, explanations, calculations, or decision summaries instead.
 - For coding, prefer secure, maintainable, production-minded solutions.
 - For research, separate known facts from uncertainty and cite sources when actual tool results are provided.
@@ -102,6 +103,8 @@ export async function POST(request: Request) {
     if (parsed.data.userContext) context.push(`CURRENT CLIENT PROFILE CONTEXT\n${JSON.stringify(parsed.data.userContext)}`)
     const incoming = parsed.data.messages.filter(m => m.role !== 'system') as ChatMessage[]
     const latestUserPrompt = [...incoming].reverse().find(m => m.role === 'user')?.content || ''
+    const intent = classifyIntent(latestUserPrompt)
+    const useWeb = parsed.data.web === true || (parsed.data.web !== false && shouldUseWeb(latestUserPrompt))
     const remaining = parsed.data.guestRemaining
     if (!user && remaining !== undefined && remaining <= 3 && remaining > 0) context.push(`GUEST LIMIT NOTICE\nThis guest has approximately ${remaining} message${remaining === 1 ? '' : 's'} remaining before the 20-message guest allowance. Briefly mention this near the end of your response. Do not make it the focus.`)
 
@@ -120,32 +123,17 @@ export async function POST(request: Request) {
 
       let fileId: string | undefined
       try {
-        const [stored] = conversation ? await db.insert(generatedFiles).values({
-          userId: user.id,
-          conversationId: conversation.id,
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-          // Neon HTTP is reliable with an explicit PostgreSQL bytea decode expression.
-          // This avoids passing a Node Buffer as an HTTP query parameter.
-          data: sql`decode(${file.bytes}, 'base64')`,
-          contentText: file.contentText,
-          metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request, skillId: skillPlan?.skillId || null },
-        }).returning({ id: generatedFiles.id }) : []
+        const [stored] = conversation ? await db.insert(generatedFiles).values({ userId: user.id, conversationId: conversation.id, name: file.name, mimeType: file.type, size: file.size, data: sql`decode(${file.bytes}, 'base64')`, contentText: file.contentText, metadata: { format: fileIntent.format, title: fileIntent.title, request: fileIntent.request, skillId: skillPlan?.skillId || null } }).returning({ id: generatedFiles.id }) : []
         fileId = stored?.id
-      } catch (storageError) {
-        // File delivery must not be lost just because workspace persistence fails.
-        console.error('Generated file persistence error:', storageError)
-      }
-
-      return NextResponse.json({ type: 'file', text: file.text, fileId: fileId || null, skill: skillPlan?.skillId || null, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
+      } catch (storageError) { console.error('Generated file persistence error:', storageError) }
+      return NextResponse.json({ type: 'file', text: file.text, fileId: fileId || null, skill: skillPlan?.skillId || null, file: { name: file.name, type: file.type, size: file.size, bytes: file.bytes } }, { headers: { 'Cache-Control': 'private, no-store', 'X-Clue-Intent': intent.intent, 'X-Clue-Intent-Confidence': String(intent.confidence) } })
     }
 
-    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}${dynamicSkillContext ? `\n\n${dynamicSkillContext}` : ''}` }
+    const system: ChatMessage = { role: 'system', content: `${CLUE_SYSTEM}\n\nREQUEST INTENT: ${intent.intent} (${intent.confidence.toFixed(2)})\nWEB TOOL: ${useWeb ? 'enabled' : 'disabled'}\nGUEST REMAINING: ${remaining === undefined ? 'not supplied' : remaining}\n\nPRIVATE USER CONTEXT:\n${context.length ? context.join('\n\n') : 'No user profile available.'}${dynamicSkillContext ? `\n\n${dynamicSkillContext}` : ''}` }
     const provider = getProvider(parsed.data.model)
     if (!provider) return NextResponse.json({ error: 'No AI provider is configured.' }, { status: 503 })
-    const stream = await provider.stream([system, ...incoming], request.signal)
-    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive', 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
+    const stream = await provider.stream([system, ...incoming], request.signal, { web: useWeb, maxTokens: intent.intent === 'deep_research' ? 1800 : 1200 })
+    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive', 'X-Clue-Intent': intent.intent, 'X-Clue-Intent-Confidence': String(intent.confidence), 'X-Clue-Web': String(useWeb), 'X-Clue-Skill': skillPlan?.skillId || 'none' } })
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') return new Response(null, { status: 499 })
     console.error('Chat route error:', error)
