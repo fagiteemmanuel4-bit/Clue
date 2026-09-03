@@ -1,27 +1,32 @@
 'use client'
+
 import { useEffect } from 'react'
-function favicon(url: string) { try { return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=32` } catch { return '' } }
-export default function SourceCardsBridge() {
-  useEffect(() => {
-    const seen = new WeakSet<HTMLElement>()
-    const enhance = () => document.querySelectorAll<HTMLElement>('p,div,li').forEach(node => {
-      if (seen.has(node) || !node.textContent?.includes('[[CLUE_SOURCES]]')) return
-      const text = node.textContent
-      const block = text.match(/\[\[CLUE_SOURCES\]\]([\s\S]*?)\[\[\/CLUE_SOURCES\]\]/)?.[1] || ''
-      const sources = [...block.matchAll(/- \[([^\]]+)\]\((https?:\/\/[^)]+)\)/g)].map(m => ({ title: m[1], url: m[2] })).slice(0, 8)
-      if (!sources.length) return
-      seen.add(node); node.innerHTML = ''
-      const wrap = document.createElement('div'); wrap.className = 'clue-source-cards'
-      sources.forEach(source => {
-        const a = document.createElement('a'); a.className = 'clue-source-card'; a.href = source.url; a.target = '_blank'; a.rel = 'noreferrer noopener'
-        const img = document.createElement('img'); img.src = favicon(source.url); img.alt = ''; img.width = 20; img.height = 20
-        const copy = document.createElement('span'); const title = document.createElement('strong'); title.textContent = source.title; const host = document.createElement('small')
-        try { host.textContent = new URL(source.url).hostname.replace(/^www\./, '') } catch { host.textContent = 'Source' }
-        copy.append(title, host); a.append(img, copy); wrap.append(a)
-      })
-      node.append(wrap)
-    })
-    enhance(); const observer = new MutationObserver(enhance); observer.observe(document.body, { childList: true, subtree: true }); return () => observer.disconnect()
-  }, [])
-  return null
+
+type Source={url:string;title?:string}
+const START='[[CLUE_SOURCES_JSON]]'
+const END='[[/CLUE_SOURCES_JSON]]'
+
+function favicon(url:string){try{return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(url).hostname)}&sz=32`}catch{return ''}}
+
+function mountSourceTray(node:HTMLElement,sources:Source[]){
+  if(node.querySelector(':scope > .clue-source-tray'))return
+  const tray=document.createElement('div');tray.className='clue-source-tray'
+  const button=document.createElement('button');button.type='button';button.className='clue-source-button';button.setAttribute('aria-label',`View ${sources.length} sources used by Clue`)
+  const icons=document.createElement('span');icons.className='clue-source-icons'
+  sources.slice(0,4).forEach(source=>{const img=document.createElement('img');img.src=favicon(source.url);img.alt='';img.width=18;img.height=18;img.loading='lazy';img.referrerPolicy='no-referrer';icons.appendChild(img)})
+  const label=document.createElement('span');label.textContent=`${sources.length} source${sources.length===1?'':'s'}`;button.append(icons,label)
+  const dialog=document.createElement('div');dialog.className='clue-source-popover';dialog.hidden=true
+  const head=document.createElement('div');head.className='clue-source-head';const title=document.createElement('strong');title.textContent='Sources Clue used';const close=document.createElement('button');close.type='button';close.textContent='×';close.setAttribute('aria-label','Close sources');head.append(title,close)
+  const list=document.createElement('div');list.className='clue-source-list'
+  sources.forEach(source=>{const a=document.createElement('a');a.href=source.url;a.target='_blank';a.rel='noreferrer noopener';a.className='clue-source-row';const img=document.createElement('img');img.src=favicon(source.url);img.alt='';img.width=20;img.height=20;img.loading='lazy';img.referrerPolicy='no-referrer';const text=document.createElement('span');try{text.textContent=source.title||new URL(source.url).hostname.replace(/^www\./,'')}catch{text.textContent=source.title||source.url}a.append(img,text);list.appendChild(a)})
+  dialog.append(head,list);tray.append(button,dialog);node.appendChild(tray)
+  button.addEventListener('click',()=>{dialog.hidden=!dialog.hidden})
+  close.addEventListener('click',()=>{dialog.hidden=true})
+}
+
+function scan(){document.querySelectorAll<HTMLElement>('.message.assistant .rich-text').forEach(node=>{if(node.querySelector(':scope > .clue-source-tray'))return;const text=node.textContent||'';const start=text.indexOf(START),end=text.indexOf(END,start+START.length);if(start<0||end<0)return;let sources:Source[]=[];try{const parsed=JSON.parse(text.slice(start+START.length,end));if(Array.isArray(parsed))sources=parsed.filter(x=>x&&typeof x.url==='string').slice(0,8)}catch{return}if(!sources.length)return;node.querySelectorAll(':scope > p, :scope > div').forEach(el=>{if((el.textContent||'').includes(START))el.remove()});mountSourceTray(node,sources)})}
+
+export default function SourceCardsBridge(){
+ useEffect(()=>{let timer:number|undefined;const schedule=()=>{window.clearTimeout(timer);timer=window.setTimeout(scan,220)};schedule();const root=document.querySelector('.messages')||document.body;const observer=new MutationObserver(schedule);observer.observe(root,{subtree:true,childList:true,characterData:true});return()=>{window.clearTimeout(timer);observer.disconnect()}},[])
+ return null
 }
