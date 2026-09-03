@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/db'
 import { memories, userProfiles } from '@/db/schema'
@@ -30,9 +30,10 @@ export async function POST(request: Request) {
     if (!(await memoryEnabled(user.id))) return Response.json({ error: 'Memory is disabled.' }, { status: 409 })
     const parsed = parseJson(createSchema, await request.json().catch(() => null))
     if (!parsed.ok) return parsed.response
-    const [row] = await db.insert(memories).values({ userId: user.id, content: parsed.data.content, importance: parsed.data.importance ?? 0.5, source: 'explicit' }).returning()
+    const content = parsed.data.content.trim()
+    const [row] = await db.insert(memories).values({ userId: user.id, content, contentHash: sql`md5(${content})`, importance: parsed.data.importance ?? 0.5, source: 'explicit' }).onConflictDoUpdate({ target: [memories.userId, memories.contentHash], set: { updatedAt: new Date(), ...(parsed.data.importance === undefined ? {} : { importance: parsed.data.importance }) } }).returning()
     return Response.json({ memory: row }, { status: 201 })
-  } catch { return Response.json({ error: 'Unauthorized' }, { status: 401 }) }
+  } catch { return Response.json({ error: 'Unable to save memory.' }, { status: 500 }) }
 }
 
 export async function PATCH(request: Request) {
@@ -41,9 +42,10 @@ export async function PATCH(request: Request) {
     if (!(await memoryEnabled(user.id))) return Response.json({ error: 'Memory is disabled.' }, { status: 409 })
     const parsed = parseJson(updateSchema, await request.json().catch(() => null))
     if (!parsed.ok) return parsed.response
-    const [row] = await db.update(memories).set({ content: parsed.data.content, ...(parsed.data.importance === undefined ? {} : { importance: parsed.data.importance }), updatedAt: new Date() }).where(and(eq(memories.id, parsed.data.id), eq(memories.userId, user.id))).returning()
+    const content = parsed.data.content.trim()
+    const [row] = await db.update(memories).set({ content, contentHash: sql`md5(${content})`, ...(parsed.data.importance === undefined ? {} : { importance: parsed.data.importance }), updatedAt: new Date() }).where(and(eq(memories.id, parsed.data.id), eq(memories.userId, user.id))).returning()
     return row ? Response.json({ memory: row }) : Response.json({ error: 'Memory not found' }, { status: 404 })
-  } catch { return Response.json({ error: 'Unauthorized' }, { status: 401 }) }
+  } catch { return Response.json({ error: 'Unable to update memory.' }, { status: 500 }) }
 }
 
 export async function DELETE(request: Request) {
@@ -53,5 +55,5 @@ export async function DELETE(request: Request) {
     if (!parsed.ok) return parsed.response
     const rows = await db.delete(memories).where(and(eq(memories.id, parsed.data.id), eq(memories.userId, user.id))).returning({ id: memories.id })
     return rows.length ? Response.json({ ok: true }) : Response.json({ error: 'Memory not found' }, { status: 404 })
-  } catch { return Response.json({ error: 'Unauthorized' }, { status: 401 }) }
+  } catch { return Response.json({ error: 'Unable to delete memory.' }, { status: 500 }) }
 }
