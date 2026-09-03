@@ -5,9 +5,10 @@ import './clue-live.css'
 import './history-menu-fix.css'
 import './clue-ui-polish.css'
 import CanvasAutosave from './components/canvas-autosave'
+import SourceCardsBridge from './components/source-cards-bridge'
 
 export const metadata: Metadata = { title: 'Clue', description: 'A calm, powerful AI workspace.' }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}<CanvasAutosave/></body></html>
+  return <html lang="en"><body>{children}<CanvasAutosave/><SourceCardsBridge/></body></html>
 }
